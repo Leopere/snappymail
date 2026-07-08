@@ -115,37 +115,15 @@ export const
 				throw Error('Not armored text');
 			}
 
-			// Use the server-stored GnuPG keyring first. OpenPGP.js remains a manual fallback.
-			let result = await GnuPGUserStore.decrypt(message);
-			if (result) {
-				return result;
-			}
-
-			if (OpenPGPUserStore.isSupported()) {
-				const sender = message.from[0].email;
-				result = await OpenPGPUserStore.decrypt(armoredText, sender);
-				if (result) {
-					return result;
-				}
-			}
-
-			// Try Mailvelope (does not support inline images)
-			return MailvelopeUserStore.decrypt(message);
+			// Invisible internal crypto uses only the server-stored GnuPG keyring.
+			return GnuPGUserStore.decrypt(message);
 		}
 
 		async verify(message) {
 			const signed = message.pgpSigned(),
 				sender = message.from[0].email;
-			if (signed) {
-				// OpenPGP only when inline, else we must download the whole message
-				if (!signed.sigPartId && OpenPGPUserStore.hasPublicKeyForEmails([sender])) {
-					return OpenPGPUserStore.verify(message);
-				}
-				if (GnuPGUserStore.hasPublicKeyForEmails([sender])) {
-					return GnuPGUserStore.verify(message);
-				}
-				// Mailvelope can't
-				// https://github.com/mailvelope/mailvelope/issues/434
+			if (signed && GnuPGUserStore.hasPublicKeyForEmails([sender])) {
+				return GnuPGUserStore.verify(message);
 			}
 		}
 
