@@ -213,9 +213,8 @@ test('internal recipients auto-enable GnuPG sign and encrypt', async ({ page }) 
 		timeout: 60000
 	}).toBe(true);
 
-	await expect(compose.locator('.organization-encryption-status')).toContainText('server GPG will sign and encrypt');
-	await expect(compose.locator('[data-i18n="[title]CRYPTO/SIGN"]')).toHaveClass(/btn-success/);
-	await expect(compose.locator('[data-i18n="[title]CRYPTO/ENCRYPT"]')).toHaveClass(/btn-success/);
+	await expect(compose.locator('.organization-encryption-status')).toContainText('server GPG signs and encrypts');
+	await expect(compose.locator('[data-i18n*="CRYPTO/SIGN"], [data-i18n*="CRYPTO/ENCRYPT"]')).toHaveCount(0);
 });
 
 test('internal GnuPG message sends to secondary account and auto-decrypts', async ({ browser }) => {
@@ -273,10 +272,11 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 
 	const recipientContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 	await recipientContext.addInitScript(() => {
-		const probe = window.__pgpDecryptProbe = {
-				openpgpDecryptCalls: 0,
-				gnupgDecryptCalls: 0
-			},
+			const probe = window.__pgpDecryptProbe = {
+					openpgpDecryptCalls: 0,
+					gnupgDecryptCalls: 0,
+					pgpVerifyCalls: 0
+				},
 			wrapOpenpgp = value => {
 				if (value?.decrypt && !value.__snappymailDecryptProbeWrapped) {
 					const originalDecrypt = value.decrypt;
@@ -301,17 +301,20 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 			}
 		});
 
-		const originalFetch = window.fetch;
-		window.fetch = function(resource, init = {}) {
-			try {
-				const body = init.body;
-				if ('string' === typeof body && 'GnupgDecrypt' === JSON.parse(body).Action) {
-					probe.gnupgDecryptCalls += 1;
-				} else if (body instanceof FormData && 'GnupgDecrypt' === body.get('Action')) {
-					probe.gnupgDecryptCalls += 1;
-				}
-			} catch (e) {
-				// Ignore non-JSON requests.
+			const originalFetch = window.fetch;
+			window.fetch = function(resource, init = {}) {
+				try {
+					const body = init.body;
+					const action = 'string' === typeof body
+						? JSON.parse(body).Action
+						: (body instanceof FormData ? body.get('Action') : '');
+					if ('GnupgDecrypt' === action) {
+						probe.gnupgDecryptCalls += 1;
+					} else if ('PgpVerifyMessage' === action) {
+						probe.pgpVerifyCalls += 1;
+					}
+				} catch (e) {
+					// Ignore non-JSON requests.
 			}
 			return originalFetch.apply(this, arguments);
 		};
@@ -321,29 +324,40 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 	await login(recipient, secondaryEmail, secondaryPassword);
 	await expect(recipient.locator('#V-PopupsAsk')).toBeHidden();
 	await recipient.getByText(subject, { exact: true }).first().click({ force: true });
-	await recipient.waitForFunction(expected => document.body.innerText.includes(expected), body, {
-		timeout: 60000
-	});
-	await expect(recipient.locator('#V-PopupsAsk')).toBeHidden();
+		await recipient.waitForFunction(expected => document.body.innerText.includes(expected), body, {
+			timeout: 60000
+		});
+		await recipient.waitForFunction(() => {
+			const message = ko.dataFor(document.querySelector('#V-MailMessageView'))?.message?.();
+			return true === message?.pgpSigned?.()?.success;
+		}, null, {
+			timeout: 60000
+		});
+		await expect(recipient.locator('#V-PopupsAsk')).toBeHidden();
+		await expect(recipient.locator('#V-MailMessageView')).toContainText('Signature verified automatically');
+		await expect(recipient.locator('#V-MailMessageView button[data-i18n="CRYPTO/DECRYPT"]:visible')).toHaveCount(0);
+		await expect(recipient.locator('#V-MailMessageView button[data-i18n="CRYPTO/VERIFY"]:visible')).toHaveCount(0);
 
-	const received = await recipient.locator('#V-MailMessageView').evaluate(element => {
-		const message = ko.dataFor(element)?.message?.(),
-			text = element.innerText;
-		return {
-			pgpDecrypted: message?.pgpDecrypted?.(),
-			hasBody: text.includes('Encrypted intra-company Playwright body'),
-			hasArmor: text.includes('BEGIN PGP MESSAGE'),
-			decryptProbe: window.__pgpDecryptProbe
+		const received = await recipient.locator('#V-MailMessageView').evaluate(element => {
+			const message = ko.dataFor(element)?.message?.(),
+				text = element.innerText;
+			return {
+				pgpDecrypted: message?.pgpDecrypted?.(),
+				pgpSignedSuccess: message?.pgpSigned?.()?.success,
+				hasBody: text.includes('Encrypted intra-company Playwright body'),
+				hasArmor: text.includes('BEGIN PGP MESSAGE'),
+				decryptProbe: window.__pgpDecryptProbe
 		};
 	});
 
-	expect(received).toMatchObject({
-		pgpDecrypted: true,
-		hasBody: true,
-		hasArmor: false
-	});
-	expect(received.decryptProbe.openpgpDecryptCalls).toBe(0);
-	expect(received.decryptProbe.gnupgDecryptCalls).toBeGreaterThan(0);
+		expect(received).toMatchObject({
+			pgpDecrypted: true,
+			pgpSignedSuccess: true,
+			hasBody: true,
+			hasArmor: false
+		});
+		expect(received.decryptProbe.openpgpDecryptCalls).toBe(0);
+		expect(received.decryptProbe.gnupgDecryptCalls).toBeGreaterThan(0);
 	await recipientContext.close();
 });
 
@@ -354,7 +368,7 @@ test('security encryption summary', async ({ page }) => {
 
 	const summary = page.locator('.encryption-summary');
 	await expect(summary).toContainText('Ready', { timeout: 30000 });
-	await expect(page.locator('details.advanced-keys')).not.toHaveAttribute('open', '');
+	await expect(page.locator('details.advanced-keys')).toHaveCount(0);
 
 	await page.screenshot({
 		fullPage: true,

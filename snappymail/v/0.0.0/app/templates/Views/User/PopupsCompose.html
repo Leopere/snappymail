@@ -60,18 +60,6 @@
 						<span data-i18n="COMPOSE/BUTTON_MARK_AS_IMPORTANT"></span>
 					</a>
 				</li>
-				<li data-bind="toggle: doSign, visible: canSign">
-					<a data-bind="attr:{title: signOptionsText}">
-						<i class="fontastic" data-bind="text: doSign() ? '☑' : '☐'"></i>
-						<span data-icon="✍" data-i18n="CRYPTO/SIGN"></span>
-					</a>
-				</li>
-				<li data-bind="toggle: doEncrypt, visible: canEncrypt">
-					<a data-bind="attr:{title: encryptOptionsText}">
-						<i class="fontastic" data-bind="text: doEncrypt() || 'mailvelope' == viewArea() ? '☑' : '☐'"></i>
-						<span data-icon="🔒" data-i18n="CRYPTO/ENCRYPT"></span>
-					</a>
-				</li>
 			</menu>
 		</div>
 		<a class="minimize-custom" data-bind="click: skipCommand" data-i18n="[title]COMPOSE/BUTTON_MINIMIZE"></a>
@@ -137,16 +125,8 @@
 		<div class="organization-encryption-status" data-bind="visible: internalGnuPGNoticeText, text: internalGnuPGNoticeText"></div>
 		<div style="display:flex">
 			<div class="btn-group" style="flex-grow:1"></div>
-			<div class="btn-group">
-				<a class="btn fontastic" data-bind="toggle: doSign, visible: canSign, css: {'btn-success': doSign()}" data-i18n="[title]CRYPTO/SIGN">
-					✍
-				</a>
-				<a class="btn fontastic" data-bind="toggle: doEncrypt, visible: canEncrypt, css: {'btn-success': doEncrypt() || 'mailvelope' == viewArea()}" data-i18n="[title]CRYPTO/ENCRYPT">
-					🔒
-				</a>
-			</div>
-			<div class="btn-group">
-				<a class="btn fontastic" style="padding-left: 10px; padding-right: 10px;" id="composeUploadButton"
+				<div class="btn-group">
+					<a class="btn fontastic" style="padding-left: 10px; padding-right: 10px;" id="composeUploadButton"
 					data-bind="visible: addAttachmentEnabled()" data-i18n="[title]COMPOSE/ATTACH_FILES">
 					⁺📎
 				</a>

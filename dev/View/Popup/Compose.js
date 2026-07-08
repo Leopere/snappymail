@@ -363,8 +363,7 @@ export class ComposePopupView extends AbstractViewPopup {
 			internalGnuPGNoticeText: () => {
 				const state = this.internalGnuPGState();
 				if (state.ready) {
-					return 'Organization recipients: server GPG will sign and encrypt this message automatically ' +
-						'unless this policy is explicitly disabled.';
+					return 'Organization recipients: server GPG signs and encrypts this message automatically.';
 				}
 				return this.internalDomainRecipients().length
 					? 'Organization recipients need server GPG keys before this message can be sent.'
@@ -1294,8 +1293,6 @@ export class ComposePopupView extends AbstractViewPopup {
 		addShortcut('t', 'alt', ScopeCompose, () => toggleOption(this.requireTLS));
 		addShortcut('l', 'alt', ScopeCompose, () => toggleOption(this.requestReadReceipt));
 		addShortcut('d', 'alt', ScopeCompose, () => toggleOption(this.requestDsn));
-		addShortcut('s', 'alt', ScopeCompose, () => this.canSign() ? toggleOption(this.doSign) : false);
-		addShortcut('e', 'alt', ScopeCompose, () => this.canEncrypt() ? toggleOption(this.doEncrypt) : false);
 		addShortcut('a', 'alt', ScopeCompose, () => {
 			this.attachmentsArea();
 			return false;

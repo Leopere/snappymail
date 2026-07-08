@@ -198,39 +198,42 @@
 		}
 	}
 
-	.crypto-control {
-		padding: 0.5em;
+		.crypto-control {
+			display: inline-flex;
+			align-items: center;
+			margin: 0 0 8px;
+			padding: 6px 10px;
+			border-radius: 8px;
+			font-size: 12px;
+			font-weight: 600;
+			line-height: 1.35;
 
-		span {
-			margin-right: 1em;
-		}
+			span {
+				margin-right: 0;
+			}
 
-		button {
-			cursor: pointer;
-		}
+			&.encrypted {
+				border: 1px solid #B7C7D9;
+				background: #F5F9FC;
+				color: #2D5E88;
+			}
+			&.signed {
+				border: 1px solid #E6D7AE;
+				background: #FFFBF1;
+				color: #735A15;
+			}
 
-		&.encrypted {
-			border: 1px dashed #18F;
-			color: #18F;
+			&.success {
+				border-color: #BFD8C3;
+				background: #F2F8F1;
+				color: #286235;
+			}
+			&.error {
+				border-color: #E8B6B1;
+				background: #FFF4F2;
+				color: #9B2D20;
+			}
 		}
-		&.signed {
-			border: 1px dashed #FA0;
-			color: #FA0;
-		}
-
-		&.success {
-			border-color: #090;
-			color: #090;
-		}
-		&.error {
-			border-color: #F00;
-			color: #F00;
-		}
-		&.error button,
-		&.success button {
-			display: none;
-		}
-	}
 
 	.thread-controls {
 		.dropdown-toggle {

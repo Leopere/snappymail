@@ -646,16 +646,28 @@ export class MessageModel extends AbstractModel {
 		});
 	}
 
-	pgpVerify(/*self, event*/) {
-		const oMessage = this;
-		PgpUserStore.verify(oMessage).then(result => {
+	pgpVerify(silent) {
+		const oMessage = this,
+			data = oMessage.pgpSigned(),
+			status = data && 'object' === typeof data ? data : {};
+
+		if (!data || true === status.success || false === status.success) {
+			return Promise.resolve(data);
+		}
+
+		return PgpUserStore.verify(oMessage).then(result => {
 			if (result) {
 				oMessage.pgpSigned(result);
+				return result;
 			} else {
-				alert('Verification failed or no valid public key found');
+				status.success = false;
+				status.error = 'Signature could not be verified automatically';
+				oMessage.pgpSigned(status);
+				silent || alert(status.error);
+				return status;
 			}
 /*
-			if (result?.success) {
+				if (result?.success) {
 				i18n('CRYPTO/GOOD_SIGNATURE', {
 					USER: validKey.user + ' (' + validKey.id + ')'
 				});
@@ -669,9 +681,15 @@ export class MessageModel extends AbstractModel {
 				i18n('CRYPTO/ERROR', {
 					TYPE: 'OpenPGP',
 					ERROR: 'message'
-				}) + (additional ? ' (' + additional + ')' : '');
-			}
+					}) + (additional ? ' (' + additional + ')' : '');
+				}
 */
+		}).catch(e => {
+			status.success = false;
+			status.error = e?.message || 'Signature could not be verified automatically';
+			oMessage.pgpSigned(status);
+			silent || alert(status.error);
+			return status;
 		});
 	}
 

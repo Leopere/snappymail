@@ -52,42 +52,11 @@
 			}"></div>
 		</div>
 
-		<input type="radio" name="identitytabs" id="tab-identity-crypto">
-		<label data-i18n="CONTACTS/TAB_CRYPTO" for="tab-identity-crypto" role="tab" aria-selected="false" aria-controls="panel3" tabindex="0"></label>
-		<div class="form-horizontal tab-content" role="tabpanel" aria-hidden="false">
-			<div class="control-group">
-				<div data-bind="component: {
-					name: 'Checkbox',
-					params: {
-						label: 'CRYPTO/SIGN',
-						value: pgpSign,
-						name: 'pgpSign'
-					}
-				}"></div>
-			</div>
-			<div class="control-group">
-				<div data-bind="component: {
-					name: 'Checkbox',
-					params: {
-						label: 'CRYPTO/ENCRYPT',
-						value: pgpEncrypt,
-						name: 'pgpEncrypt'
-					}
-				}"></div>
-			</div>
-<!--
-			<div class="control-group">
-				<label data-i18n="CRYPTO/ENCRYPT"></label>
-				<select name="PgpEncrypt" data-bind="value: pgpEncrypt">
-					<option value="Ask" data-i18n="CONTACTS/ASK"></option>
-					<option value="Never" data-i18n="CONTACTS/NEVER"></option>
-					<option value="Always" data-i18n="CONTACTS/ALWAYS"></option>
-					<option value="IfPossible" data-i18n="CONTACTS/ALWAYS_IF_POSSIBLE"></option>
-				</select>
-			</div>
--->
-			<details>
-				<summary><strong>S/MIME</strong></summary>
+			<input type="radio" name="identitytabs" id="tab-identity-crypto">
+			<label data-i18n="CONTACTS/TAB_CRYPTO" for="tab-identity-crypto" role="tab" aria-selected="false" aria-controls="panel3" tabindex="0"></label>
+			<div class="form-horizontal tab-content" role="tabpanel" aria-hidden="false">
+				<details>
+					<summary><strong>S/MIME</strong></summary>
 				<div class="control-group" data-bind="css: {'error': smimeKey() && !smimeKeyValid()}">
 					<label data-i18n="CRYPTO/PRIVATE_KEY"></label>
 					<textarea name="smimeKey" class="input-xxlarge" rows="14" autofocus="" autocomplete="off" data-bind="value: smimeKey"></textarea>

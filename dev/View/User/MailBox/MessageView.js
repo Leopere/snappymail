@@ -149,6 +149,7 @@ export class MailMessageView extends AbstractViewRight {
 		this.message = currentMessage;
 		this.messageLoadingThrottle = MessageUserStore.loading;
 		this.messageError = MessageUserStore.error;
+		this.pgpVerificationRequests = new WeakSet();
 
 		this.fullScreenMode = isFullscreen;
 		this.toggleFullScreen = toggleFullscreen;
@@ -247,6 +248,34 @@ export class MailMessageView extends AbstractViewRight {
 
 			pgpSupported: () => currentMessage() && PgpUserStore.isSupported(),
 
+			pgpEncryptionStatusText: () => {
+				const message = currentMessage(),
+					encrypted = message?.pgpEncrypted?.();
+				if (!encrypted) {
+					return '';
+				}
+				if (message.pgpDecrypted()) {
+					return 'Encrypted message decrypted automatically';
+				}
+				return encrypted.error
+					? 'Encrypted message could not be decrypted automatically'
+					: 'Encrypted message';
+			},
+
+			pgpSignatureStatusText: () => {
+				const signed = currentMessage()?.pgpSigned?.();
+				if (!signed) {
+					return '';
+				}
+				if (true === signed.success) {
+					return 'Signature verified automatically';
+				}
+				if (false === signed.success) {
+					return 'Signature could not be verified';
+				}
+				return 'Verifying signature automatically';
+			},
+
 			canBeUndeleted: () => currentMessage()?.isDeleted(),
 
 			messageListOrViewLoading:
@@ -266,7 +295,7 @@ export class MailMessageView extends AbstractViewRight {
 					this.spfData(message.spf[0] || ['none', '', '']);
 					this.dmarcData(message.dmarc[0] || ['none', '', '']);
 					this.nowTracking(false);
-					this.autoDecryptMessage(message);
+					this.autoSecureMessage(message);
 				} else {
 					MessagelistUserStore.selectedMessage(null);
 
@@ -276,7 +305,7 @@ export class MailMessageView extends AbstractViewRight {
 				}
 			},
 
-			messageLoadingThrottle: value => !value && this.autoDecryptMessage(),
+			messageLoadingThrottle: value => !value && this.autoSecureMessage(),
 
 			showFullInfo: value => Local.set(ClientSideKeyNameMessageHeaderFullInfo, value ? '1' : '0')
 		});
@@ -311,8 +340,28 @@ export class MailMessageView extends AbstractViewRight {
 		this.showFullInfo(!this.showFullInfo());
 	}
 
-	autoDecryptMessage(message = currentMessage()) {
-		message && GnuPGUserStore.hasRememberedDecryptionKey(message) && message.decrypt();
+	autoSecureMessage(message = currentMessage()) {
+		if (!message) {
+			return;
+		}
+
+		if (GnuPGUserStore.hasRememberedDecryptionKey(message)) {
+			message.decrypt().then(() => {
+				currentMessage() === message && this.autoVerifyMessage(message);
+			});
+		} else {
+			this.autoVerifyMessage(message);
+		}
+	}
+
+	autoVerifyMessage(message = currentMessage()) {
+		const signed = message?.pgpSigned?.();
+		if (!signed || true === signed.success || false === signed.success || this.pgpVerificationRequests.has(message)) {
+			return;
+		}
+
+		this.pgpVerificationRequests.add(message);
+		message.pgpVerify(true).finally(() => this.pgpVerificationRequests.delete(message));
 	}
 
 	closeMessage() {
