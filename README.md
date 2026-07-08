@@ -1,3 +1,29 @@
+## Brandable SnappyMail Fork
+
+This repository is a private brandable hard-fork scaffold of SnappyMail. It adds runtime branding env vars, Motherboard Repair Canada default assets, an internal-domain GnuPG default, and a static rebuild watcher while preserving upstream SnappyMail attribution and AGPL licensing.
+
+See [BRANDING.md](BRANDING.md) for supported env vars and the local rebuild loop.
+
+Local development:
+
+```sh
+npm run dev
+```
+
+This builds static assets, starts Docker on `0.0.0.0:8888`, and rebuilds generated assets on source changes. Use `npm run dev:tunnel` to also expose the local stack through `https://mail.nixc.us/`.
+
+For the tunnel profile, copy `.env.example` to `.env` and set `TUNNEL_KEY_PATH` to the private key used with `ingress.nixc.us`. `.env` is local-only and ignored by git.
+
+Verification:
+
+```sh
+npm run verify
+```
+
+The UI test provisions `test@example.com` and `teammate@example.com` locally, exchanges their GnuPG public keys, sends an internal encrypted message, and checks that the recipient sees decrypted content without PGP armor.
+
+---
+
 <div align="center">
   <a href="https://github.com/the-djmaze/snappymail">
     <img src="https://snappymail.eu/static/img/logo-256x256-white.png">

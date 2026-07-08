@@ -1,0 +1,599 @@
+@font-face {
+	font-display: swap;
+	font-family: "Montserrat";
+	font-style: normal;
+	font-weight: 400;
+	src: url("fonts/montserrat-regular.woff2") format("woff2");
+}
+
+@font-face {
+	font-display: swap;
+	font-family: "Montserrat";
+	font-style: normal;
+	font-weight: 500;
+	src: url("fonts/montserrat-medium.woff2") format("woff2");
+}
+
+@font-face {
+	font-display: swap;
+	font-family: "Montserrat";
+	font-style: normal;
+	font-weight: 600;
+	src: url("fonts/montserrat-semibold.woff2") format("woff2");
+}
+
+@font-face {
+	font-display: swap;
+	font-family: "Montserrat";
+	font-style: normal;
+	font-weight: 700;
+	src: url("fonts/montserrat-bold.woff2") format("woff2");
+}
+
+@font-face {
+	font-display: swap;
+	font-family: "Montserrat";
+	font-style: italic;
+	font-weight: 400;
+	src: url("fonts/montserrat-regular-italic.woff2") format("woff2");
+}
+
+:root {
+	color-scheme: light;
+	--brand-primary-color: #1A73E8;
+	--brand-secondary-color: #4285F4;
+	--brand-theme-color: #1D3557;
+	--brand-slate: #457B9D;
+	--brand-danger: #E63946;
+	--brand-text: #333333;
+	--brand-ink: #172B4D;
+	--brand-surface: #F7FAFC;
+	--brand-surface-strong: #FFFFFF;
+	--brand-border: #D6E1EA;
+
+	--fontSans: "Montserrat", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	--main-color: var(--brand-text);
+	--main-bg-color: #EEF5FA;
+	--main-bg-image: none;
+	--main-font-size: 14px;
+	--link-color: var(--brand-primary-color);
+
+	--loading-color: var(--brand-theme-color);
+	--loading-text-shadow: none;
+	--spinner-color: var(--brand-primary-color);
+
+	--login-color: var(--brand-text);
+	--login-bg-color: rgba(255, 255, 255, 0.96);
+	--login-box-shadow: 0 18px 50px rgba(29, 53, 87, 0.18);
+	--login-border: 1px solid var(--brand-border);
+	--login-border-radius: 8px;
+
+	--panel-bg-clr: var(--brand-surface-strong);
+	--dialog-bg-clr: var(--brand-surface-strong);
+	--dialog-border-clr: var(--brand-border);
+	--dialog-border-radius: 8px;
+	--dialog-clr: var(--brand-text);
+	--border-color: var(--brand-border);
+	--border-radius: 8px;
+	--input-border-radius: 6px;
+	--input-bg-clr: #FFFFFF;
+	--input-border-clr: #B8C9D6;
+	--input-focus-border-clr: var(--brand-primary-color);
+	--input-clr: var(--brand-text);
+
+	--btn-clr: var(--brand-theme-color);
+	--btn-bg-clr: #FFFFFF;
+	--btn-border-clr: #B8C9D6;
+	--btn-border-radius: 6px;
+	--btn-danger-bg-clr: var(--brand-danger);
+	--btn-success-bg-clr: #1E8E3E;
+
+	--dropdown-menu-color: var(--brand-text);
+	--dropdown-menu-bg-color: #FFFFFF;
+	--dropdown-menu-hover-bg-color: rgba(26, 115, 232, 0.10);
+	--dropdown-menu-hover-color: var(--brand-theme-color);
+	--dropdown-menu-disable-color: #8293A3;
+
+	--folders-color: #EAF3FA;
+	--folders-disabled-color: rgba(255, 255, 255, 0.48);
+	--folders-selected-color: #FFFFFF;
+	--folders-selected-bg-color: rgba(26, 115, 232, 0.24);
+	--folders-focused-color: #FFFFFF;
+	--folders-focused-bg-color: rgba(26, 115, 232, 0.30);
+	--folders-hover-color: #FFFFFF;
+	--folders-hover-bg-color: rgba(69, 123, 157, 0.30);
+	--folders-drop-color: #FFFFFF;
+	--folders-drop-bg-color: rgba(230, 57, 70, 0.28);
+	--unread-count-bg-color: var(--brand-danger);
+	--unread-count-color: #FFFFFF;
+
+	--settings-menu-color: #EAF3FA;
+	--settings-menu-selected-color: #FFFFFF;
+	--settings-menu-selected-bg-color: rgba(26, 115, 232, 0.24);
+	--settings-menu-hover-color: #FFFFFF;
+	--settings-menu-hover-bg-color: rgba(69, 123, 157, 0.30);
+
+	--message-list-toolbar-bg-color: #EEF5FA;
+	--message-header-bg-clr: #EEF5FA;
+	--tab-active-bg-clr: #FFFFFF;
+	--tab-hover-border-clr: #B8C9D6;
+	--smMainShadow: 0 10px 28px rgba(29, 53, 87, 0.12);
+}
+
+body#rl-app {
+	background:
+		linear-gradient(135deg, rgba(29, 53, 87, 0.10), rgba(69, 123, 157, 0.05) 38%, rgba(230, 57, 70, 0.05)),
+		var(--main-bg-color);
+}
+
+#rl-app {
+	font-feature-settings: "kern";
+}
+
+#rl-left {
+	background: linear-gradient(180deg, var(--brand-theme-color), #13263F);
+	box-shadow: 12px 0 30px rgba(29, 53, 87, 0.16);
+}
+
+#rl-left::before {
+	background: url("images/logo.svg") left center / contain no-repeat;
+	content: "";
+	display: block;
+	height: 62px;
+	margin: 16px 12px 8px;
+}
+
+#rl-left .buttonCompose,
+#V-MailMessageList .buttonCompose {
+	align-items: center;
+	background: #FFFFFF;
+	border: 1px solid rgba(255, 255, 255, 0.22);
+	border-radius: 8px;
+	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
+	color: var(--brand-theme-color);
+	display: inline-flex;
+	font-weight: 700;
+	gap: 8px;
+	justify-content: flex-start;
+	letter-spacing: 0;
+	line-height: 34px;
+	max-width: none;
+	min-height: 34px;
+	padding: 0 14px;
+	text-shadow: none;
+	transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+#rl-left .buttonCompose {
+	margin: 0 8px 12px;
+	width: calc(100% - 16px);
+}
+
+#V-MailMessageList .buttonCompose {
+	height: 36px;
+	justify-content: center;
+	padding: 0;
+	width: 44px;
+}
+
+#rl-left .buttonCompose:hover,
+#V-MailMessageList .buttonCompose:hover {
+	background: #F7FBFF;
+	box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+	opacity: 1;
+	transform: translateY(-1px);
+}
+
+#rl-left .buttonCompose:active,
+#V-MailMessageList .buttonCompose:active {
+	box-shadow: 0 5px 14px rgba(0, 0, 0, 0.14);
+	transform: translateY(0);
+}
+
+#rl-left .buttonCompose.btn-warning,
+#V-MailMessageList .buttonCompose.btn-warning {
+	background: rgba(255, 255, 255, 0.78);
+	color: var(--brand-theme-color);
+}
+
+#rl-left .buttonCompose .compose-plus,
+#V-MailMessageList .buttonCompose .compose-plus {
+	color: var(--brand-primary-color);
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1;
+	margin: 0;
+	min-width: auto;
+}
+
+#rl-left .buttonComposeText {
+	display: inline-block;
+	max-width: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+html.rl-left-panel-disabled #rl-left .buttonCompose {
+	border-radius: 8px;
+	height: 36px;
+	padding: 0;
+	width: 36px;
+}
+
+html.rl-left-panel-disabled #rl-left .buttonCompose .compose-plus {
+	font-size: 15px;
+}
+
+html.rl-left-panel-disabled #rl-left::before {
+	background-image: none;
+	height: 20px;
+	margin: 10px 0 0;
+}
+
+#rl-right {
+	background: transparent;
+}
+
+.LoginView .descWrapper {
+	background: url("images/logo.svg") center top / min(360px, 82vw) auto no-repeat;
+	color: var(--brand-theme-color);
+	font-size: 0;
+	height: 98px;
+	margin-bottom: 18px;
+	text-shadow: none;
+}
+
+.LoginView form {
+	backdrop-filter: blur(12px);
+}
+
+.LoginView form * {
+	color: var(--brand-text);
+}
+
+.LoginView input,
+.LoginView .btn {
+	background: #FFFFFF;
+	border: 1px solid var(--brand-border);
+	color: var(--brand-text);
+}
+
+.LoginView input:focus,
+.LoginView input:hover {
+	border-color: var(--brand-primary-color);
+	box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
+}
+
+.LoginView .buttonLogin,
+.btn.btn-success {
+	background: var(--brand-primary-color);
+	border-color: var(--brand-primary-color);
+	color: #FFFFFF;
+	font-weight: 700;
+	letter-spacing: 0;
+	text-shadow: none;
+}
+
+.LoginView .buttonLogin:hover,
+.LoginView .buttonLogin:focus,
+.btn.btn-success:hover,
+.btn.btn-success:focus {
+	background: #155FC0;
+	border-color: #155FC0;
+	color: #FFFFFF;
+}
+
+.btn {
+	background-image: none;
+	font-weight: 600;
+	text-shadow: none;
+}
+
+.btn-toolbar {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.btn-toolbar > *,
+.btn-toolbar .btn,
+.btn-toolbar .btn-group {
+	margin-right: 0 !important;
+}
+
+.btn-toolbar .btn-group {
+	align-items: center;
+	display: inline-flex;
+	gap: 6px;
+}
+
+.btn-toolbar .btn-group > * + * {
+	margin-left: 0 !important;
+}
+
+.btn-toolbar > .btn,
+.btn-toolbar .btn-group > .btn {
+	border-radius: var(--btn-border-radius, 6px) !important;
+	min-width: 34px;
+}
+
+#V-MailMessageList .btn-toolbar,
+#V-MailMessageView .top-toolbar {
+	gap: 9px;
+	padding-left: 8px;
+	padding-right: 8px;
+}
+
+#rl-left .b-toolbar,
+#rl-left .b-footer {
+	gap: 8px;
+	padding-right: 8px;
+}
+
+#rl-left .buttonCompose,
+#V-MailMessageList .buttonCompose {
+	border-radius: 8px !important;
+}
+
+dialog > footer .btn + .btn {
+	margin-left: 8px;
+}
+
+.btn:hover,
+.btn:focus {
+	background-color: rgba(26, 115, 232, 0.08);
+	border-color: var(--brand-primary-color);
+	color: var(--brand-theme-color);
+}
+
+.btn-danger,
+.button-confirm-delete.delete-access {
+	background-color: var(--brand-danger);
+	border-color: var(--brand-danger);
+	color: #FFFFFF;
+}
+
+input,
+select,
+.select,
+textarea,
+.emailaddresses {
+	box-shadow: none;
+}
+
+input:focus,
+select:focus,
+.select:focus,
+textarea:focus,
+.emailaddresses.focused {
+	border-color: var(--brand-primary-color);
+	box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
+}
+
+#V-MailMessageList,
+#V-MailMessageView,
+#V-SettingsPane,
+dialog {
+	border-color: var(--brand-border);
+}
+
+.messageListItem.selected,
+.messageListItem.focused {
+	background-color: rgba(26, 115, 232, 0.11);
+	border-left-color: var(--brand-primary-color);
+	border-right-color: var(--brand-primary-color) !important;
+}
+
+.messageListItem.unseen {
+	background-color: #FFFFFF;
+	color: var(--brand-ink);
+	font-weight: 600;
+}
+
+.messageListItem.flagged,
+.messageListItem.answered.flagged {
+	border-left-color: var(--brand-danger);
+}
+
+.thm-message-list-top-toolbar,
+.thm-message-list-bottom-toolbar {
+	background: #EEF5FA !important;
+	border-color: var(--brand-border) !important;
+}
+
+#messageItem .bodySubHeader,
+.messageView .b-message-header {
+	background-color: #EEF5FA;
+	border-color: var(--brand-border);
+}
+
+.legend {
+	border-bottom-color: var(--brand-border);
+	color: var(--brand-theme-color);
+	font-size: 135%;
+	font-weight: 700;
+	letter-spacing: 0;
+}
+
+#V-SettingsMenu nav a,
+.b-folders li a {
+	border-radius: 6px;
+	font-weight: 600;
+	margin: 1px 6px;
+}
+
+#V-SettingsMenu nav a.selected,
+.b-folders li a.selectable.selected {
+	box-shadow: inset 3px 0 0 var(--brand-danger);
+}
+
+.dropdown.show {
+	box-shadow: 0 12px 28px rgba(29, 53, 87, 0.16);
+}
+
+.dropdown-menu {
+	border-color: var(--brand-border);
+	border-radius: 8px;
+	box-shadow: 0 14px 32px rgba(29, 53, 87, 0.14);
+}
+
+.alert-info {
+	background-color: rgba(26, 115, 232, 0.08);
+	border-color: rgba(26, 115, 232, 0.22);
+	color: var(--brand-theme-color);
+}
+
+.alert-error {
+	background-color: rgba(230, 57, 70, 0.08);
+	border-color: rgba(230, 57, 70, 0.28);
+	color: #A9222D;
+}
+
+#V-Settings-Security .encryption-summary {
+	align-items: center;
+	background: #F8FBFD;
+	border: 1px solid var(--brand-border);
+	border-left: 4px solid var(--brand-secondary-color);
+	border-radius: 6px;
+	display: flex;
+	gap: 12px;
+	margin: 0 0 18px;
+	max-width: 760px;
+	padding: 14px 16px;
+}
+
+#V-Settings-Security .encryption-summary.ready {
+	border-left-color: #2E7D32;
+}
+
+#V-Settings-Security .encryption-summary.pending {
+	border-left-color: var(--brand-secondary-color);
+}
+
+#V-Settings-Security .encryption-summary.unavailable {
+	border-left-color: var(--brand-danger);
+}
+
+#V-Settings-Security .encryption-mark {
+	align-items: center;
+	background: rgba(26, 115, 232, 0.1);
+	border-radius: 6px;
+	color: var(--brand-primary-color);
+	display: flex;
+	flex: 0 0 36px;
+	font-size: 18px;
+	height: 36px;
+	justify-content: center;
+}
+
+#V-Settings-Security .encryption-copy {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+#V-Settings-Security .encryption-title {
+	color: var(--brand-theme-color);
+	font-size: 15px;
+	font-weight: 700;
+	line-height: 1.3;
+}
+
+#V-Settings-Security .encryption-meta {
+	color: var(--brand-muted);
+	font-size: 13px;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+#V-Settings-Security .encryption-state {
+	color: var(--brand-theme-color);
+	flex: 0 0 auto;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+#V-Settings-Security .advanced-keys {
+	border-top: 1px solid var(--brand-border);
+	margin-top: 14px;
+	max-width: 900px;
+	padding-top: 12px;
+}
+
+#V-Settings-Security .advanced-keys > summary {
+	color: var(--brand-theme-color);
+	cursor: pointer;
+	font-weight: 700;
+	line-height: 2;
+}
+
+#V-Settings-Security .key-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 10px 0 18px;
+}
+
+#V-Settings-Security .key-section {
+	border-top: 1px solid var(--brand-border);
+	margin-top: 18px;
+	padding-top: 16px;
+}
+
+#V-Settings-Security .key-section h3 {
+	color: var(--brand-theme-color);
+	font-size: 16px;
+	font-weight: 700;
+	line-height: 1.4;
+	margin: 0 0 8px;
+}
+
+#V-Settings-Security .key-counts {
+	color: var(--brand-muted);
+	display: flex;
+	flex-wrap: wrap;
+	font-size: 12px;
+	gap: 4px 8px;
+	margin-bottom: 8px;
+}
+
+#V-Settings-Security #mailvelope-settings {
+	height: 40em;
+}
+
+#V-PopupsKeyboardShortcutsHelp .modal-body {
+	padding: 16px;
+}
+
+#V-PopupsKeyboardShortcutsHelp .tabs > label {
+	border-radius: 6px 6px 0 0;
+	color: var(--brand-theme-color);
+	font-weight: 700;
+	letter-spacing: 0;
+	padding: 7px 8px;
+}
+
+#V-PopupsKeyboardShortcutsHelp .tabs > [id^="tab"]:checked + label {
+	background: #FFFFFF;
+	border-color: var(--brand-border) var(--brand-border) #FFFFFF var(--brand-border);
+}
+
+#V-PopupsKeyboardShortcutsHelp table {
+	background: #FFFFFF;
+	border-color: var(--brand-border);
+}
+
+#V-PopupsKeyboardShortcutsHelp td {
+	border-color: var(--brand-border);
+	color: var(--brand-text);
+	line-height: 1.45;
+	padding: 8px 10px;
+}
+
+#V-PopupsKeyboardShortcutsHelp kbd {
+	background: #EEF5FA;
+	border-color: #B8C9D6;
+	color: var(--brand-theme-color);
+}

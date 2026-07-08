@@ -20,24 +20,65 @@ export const
 //	END_PGP_PUBLIC_KEY = '-----END PGP PUBLIC KEY BLOCK-----',
 
 	PgpUserStore = new class {
+		constructor() {
+			this.loginPassword = null;
+		}
+
+		rememberLoginPassword(email, password) {
+			this.loginPassword = email && password ? { email, password } : null;
+		}
+
 		init() {
+			const initKeyrings = () =>
+				this.loadKeyrings()
+					.then(() => this.bootstrapOpenPGPFromLogin());
+
 			if (SettingsCapa('OpenPGP') && window.crypto && crypto.getRandomValues) {
 				rl.loadScript(SettingsGet('StaticLibsJs').replace('/libs.', '/openpgp.'))
 //				rl.loadScript(staticLink('js/min/openpgp.min.js'))
-					.then(() => this.loadKeyrings())
+					.then(initKeyrings)
 					.catch(e => {
-						this.loadKeyrings();
+						initKeyrings();
 						console.error(e);
 					});
 			} else {
-				this.loadKeyrings();
+				initKeyrings();
 			}
 		}
 
 		loadKeyrings(identifier) {
 			MailvelopeUserStore.loadKeyring(identifier);
-			OpenPGPUserStore.loadKeyrings();
-			GnuPGUserStore.loadKeyrings();
+			const openPgpReady = OpenPGPUserStore.loadKeyrings() || Promise.resolve(),
+				gnuPgpReady = GnuPGUserStore.loadKeyrings() || Promise.resolve();
+			return Promise.all([openPgpReady, gnuPgpReady]);
+		}
+
+		bootstrapOpenPGPFromLogin() {
+			const credentials = this.loginPassword;
+			this.loginPassword = null;
+			if (!credentials || !OpenPGPUserStore.isSupported()) {
+				return Promise.resolve();
+			}
+
+			return OpenPGPUserStore
+				.ensureKeyForLogin(credentials.email, credentials.password)
+				.then(keyPair => {
+					GnuPGUserStore.rememberPassphraseFor(credentials.email, credentials.password);
+					if (keyPair?.publicKey) {
+						const inGnuPG = GnuPGUserStore.isSupported() ? 3 : 0;
+						return GnuPGUserStore.storeKeyPair({
+							publicKey: keyPair.publicKey,
+							privateKey: keyPair.privateKey,
+							onServer: 3,
+							inGnuPG
+						})
+						.then(() => inGnuPG
+							? GnuPGUserStore.loadKeyrings()
+								.then(() => GnuPGUserStore.rememberPassphraseFor(credentials.email, credentials.password))
+							: null
+						);
+					}
+				});
 		}
 
 		/**

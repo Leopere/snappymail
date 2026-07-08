@@ -559,8 +559,9 @@ class Actions
 
 		$aResult = array(
 			'Auth' => false,
-			'title' => $oConfig->Get('webmail', 'title', 'SnappyMail Webmail'),
-			'loadingDescription' => $oConfig->Get('webmail', 'loading_description', 'SnappyMail'),
+			'title' => \SnappyMail\Branding::title($oConfig->Get('webmail', 'title', '')),
+			'loadingDescription' => \SnappyMail\Branding::loadingDescription($oConfig->Get('webmail', 'loading_description', '')),
+			'Brand' => \SnappyMail\Branding::data($oConfig->Get('webmail', 'favicon_url', '')),
 			'Plugins' => array(),
 			'System' => array(
 				'version' => APP_VERSION,
@@ -868,7 +869,7 @@ class Actions
 				Capa::IDENTITIES          => (bool) $oConfig->Get('webmail', 'allow_additional_identities', false),
 				Capa::OPENPGP             => (bool) $oConfig->Get('security', 'openpgp', true),
 				Capa::SIEVE               => false,
-				Capa::THEMES              => (bool) $oConfig->Get('webmail', 'allow_themes', false),
+				Capa::THEMES              => \SnappyMail\Branding::allowThemes((bool) $oConfig->Get('webmail', 'allow_themes', false)),
 				Capa::USER_BACKGROUND     => (bool) $oConfig->Get('webmail', 'allow_user_background', false),
 				'Kolab'                   => false, // See Kolab plugin
 			);

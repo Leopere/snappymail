@@ -28,16 +28,82 @@
 	</div>
 </div>
 
-<div class="legend">OpenPGP</div>
-<button class="btn" data-bind="click: addOpenPgpKey" data-icon="✚" data-i18n="SETTINGS_OPENPGP/BUTTON_IMPORT_KEY"></button>
-<!-- ko if: canOpenPGP || canGnuPG -->
-&nbsp;&nbsp;
-<button class="btn" data-bind="click: generateOpenPgpKey" data-icon="🔑" data-i18n="SETTINGS_OPENPGP/BUTTON_GENERATE_KEY_PAIR"></button>
+<div class="encryption-summary" data-bind="css: encryptionStatusClass">
+	<div class="encryption-mark fontastic">🔒</div>
+	<div class="encryption-copy">
+		<div class="encryption-title">Encryption</div>
+		<div class="encryption-meta" data-bind="text: encryptionSummary"></div>
+	</div>
+	<div class="encryption-state" data-bind="text: encryptionStatus"></div>
+</div>
+
+<details class="advanced-keys">
+<summary>Advanced keys</summary>
+<div class="key-actions">
+	<button class="btn" data-bind="click: addOpenPgpKey" data-icon="✚" data-i18n="SETTINGS_OPENPGP/BUTTON_IMPORT_KEY"></button>
+	<!-- ko if: canOpenPGP || canGnuPG -->
+	<button class="btn" data-bind="click: generateOpenPgpKey" data-icon="🔑" data-i18n="SETTINGS_OPENPGP/BUTTON_GENERATE_KEY_PAIR"></button>
+	<!-- /ko -->
+</div>
+
+<!-- ko if: canOpenPGP -->
+<section class="key-section">
+<h3>OpenPGP.js</h3>
+<div class="key-counts">
+	<span data-bind="text: openpgpPrivateCount"></span><span> private</span>
+	<span data-bind="text: openpgpPublicCount"></span><span> public</span>
+</div>
+<table class="table table-hover list-table">
+	<tbody><tr><th colspan="4" data-i18n="SETTINGS_OPENPGP/TITLE_PRIVATE">Private keys</th></tr></tbody>
+	<tbody data-bind="foreach: openpgpkeysPrivate, i18nUpdate: openpgpkeysPrivate">
+		<tr>
+			<td data-bind="click: view">
+				<span class="fontastic" data-i18n="[title]SETTINGS_OPENPGP/TITLE_PRIVATE">🔒</span>
+				<span class="key-id" data-bind="text: id"></span>
+				<!-- ko foreach: emails -->
+				<span class="key-user" data-bind="text: $data"></span>
+				<!-- /ko -->
+			</td>
+			<td>
+				<a class="btn btn-small btn-danger button-confirm-delete" data-bind="css: {'delete-access': askDelete()}, click: remove"
+					data-i18n="GLOBAL/ARE_YOU_SURE"></a>
+			</td>
+			<td>
+				<span class="delete-key fontastic" data-bind="visible: !askDelete(), click: openForDeletion">🗑</span>
+			</td>
+		</tr>
+	</tbody>
+	<tbody><tr><th colspan="4" data-i18n="SETTINGS_OPENPGP/TITLE_PUBLIC">Public keys</th></tr></tbody>
+	<tbody data-bind="foreach: openpgpkeysPublic, i18nUpdate: openpgpkeysPublic">
+		<tr>
+			<td data-bind="click: view">
+				<span class="fontastic" data-i18n="[title]SETTINGS_OPENPGP/TITLE_PUBLIC">🔑</span>
+				<span class="key-id" data-bind="text: id"></span>
+				<!-- ko foreach: emails -->
+				<span class="key-user" data-bind="text: $data"></span>
+				<!-- /ko -->
+			</td>
+			<td>
+				<a class="btn btn-small btn-danger button-confirm-delete" data-bind="css: {'delete-access': askDelete()}, click: remove"
+					data-i18n="GLOBAL/ARE_YOU_SURE"></a>
+			</td>
+			<td>
+				<span class="delete-key fontastic" data-bind="visible: !askDelete(), click: openForDeletion">🗑</span>
+			</td>
+		</tr>
+	</tbody>
+</table>
+<button class="btn" data-bind="click: importToOpenPGP" data-i18n="SETTINGS_OPENPGP/IMPORT_FROM_SERVER"></button>
+</section>
 <!-- /ko -->
 
 <!-- ko if: canGnuPG -->
-<details style="margin:1em 0">
-<summary style="font-size:larger;font-weight:bold">GnuPG</summary>
+<section class="key-section">
+<h3>GnuPG</h3>
+<div class="key-counts">
+	<span data-bind="text: gnupgPrivateCount"></span><span> private</span>
+	<span data-bind="text: gnupgPublicCount"></span><span> public</span>
+</div>
 <table class="table table-hover list-table">
 	<tbody><tr><th colspan="4" data-i18n="SETTINGS_OPENPGP/TITLE_PRIVATE">Private keys</th></tr></tbody>
 	<tbody data-bind="foreach: gnupgPrivateKeys, i18nUpdate: gnupgPrivateKeys">
@@ -80,64 +146,17 @@
 		</tr>
 	</tbody>
 </table>
-</details>
+</section>
 <!-- /ko -->
 
-<!-- ko if: canOpenPGP -->
-<details style="margin:1em 0">
-<summary style="font-size:larger;font-weight:bold">OpenPGP.js</summary>
-<table class="table table-hover list-table">
-	<tbody><tr><th colspan="4" data-i18n="SETTINGS_OPENPGP/TITLE_PRIVATE">Private keys</th></tr></tbody>
-	<tbody data-bind="foreach: openpgpkeysPrivate, i18nUpdate: openpgpkeysPrivate">
-		<tr>
-			<td data-bind="click: view">
-				<span class="fontastic" data-i18n="[title]SETTINGS_OPENPGP/TITLE_PRIVATE">🔒</span>
-				<span class="key-id" data-bind="text: id"></span>
-				<!-- ko foreach: emails -->
-				<span class="key-user" data-bind="text: $data"></span>
-				<!-- /ko -->
-			</td>
-			<td>
-				<a class="btn btn-small btn-danger button-confirm-delete" data-bind="css: {'delete-access': askDelete()}, click: remove"
-					data-i18n="GLOBAL/ARE_YOU_SURE"></a>
-			</td>
-			<td>
-				<span class="delete-key fontastic" data-bind="visible: !askDelete(), click: openForDeletion">🗑</span>
-			</td>
-		</tr>
-	</tbody>
-	<tbody><tr><th colspan="4" data-i18n="SETTINGS_OPENPGP/TITLE_PUBLIC">Public keys</th></tr></tbody>
-	<tbody data-bind="foreach: openpgpkeysPublic, i18nUpdate: openpgpkeysPublic">
-		<tr>
-			<td data-bind="click: view">
-				<span class="fontastic" data-i18n="[title]SETTINGS_OPENPGP/TITLE_PUBLIC">🔑</span>
-				<span class="key-id" data-bind="text: id"></span>
-				<!-- ko foreach: emails -->
-				<span class="key-user" data-bind="text: $data"></span>
-				<!-- /ko -->
-			</td>
-			<td>
-				<a class="btn btn-small btn-danger button-confirm-delete" data-bind="css: {'delete-access': askDelete()}, click: remove"
-					data-i18n="GLOBAL/ARE_YOU_SURE"></a>
-			</td>
-			<td>
-				<span class="delete-key fontastic" data-bind="visible: !askDelete(), click: openForDeletion">🗑</span>
-			</td>
-		</tr>
-	</tbody>
-</table>
-<button class="btn" data-bind="click: importToOpenPGP" data-i18n="SETTINGS_OPENPGP/IMPORT_FROM_SERVER"></button>
-</details>
-<!-- /ko -->
-
-<details style="margin:1em 0">
-<summary style="font-size:larger;font-weight:bold">Mailvelope</summary>
+<section class="key-section">
+<h3>Mailvelope</h3>
 <a data-bind="visible: !canMailvelope" href="https://mailvelope.com/en/help" target="_blank" data-i18n="SETTINGS_OPENPGP/GET_MAILVELOPE"></a>
-<div id="mailvelope-settings" style="height:40em" data-bind="visible: canMailvelope"></div>
-</details>
+<div id="mailvelope-settings" data-bind="visible: canMailvelope"></div>
+</section>
 
-<details>
-<summary class="legend" data-i18n="SMIME/CERTIFICATES"></summary>
+<section class="key-section">
+<h3 data-i18n="SMIME/CERTIFICATES"></h3>
 <button class="btn" data-bind="click: importToSMime" data-icon="✚" data-i18n="OPENPGP/POPUP_IMPORT_BUTTON"></button>
 
 <table class="table table-hover list-table">
@@ -164,4 +183,5 @@
 		</tr>
 	</tbody>
 </table>
+</section>
 </details>

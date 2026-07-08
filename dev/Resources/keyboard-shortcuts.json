@@ -1,0 +1,98 @@
+{
+	"tabs": [
+		{
+			"id": "mailbox",
+			"label": "SHORTCUTS_HELP/TAB_MAILBOX",
+			"rows": [
+				{ "iconClass": "icon-help", "label": "GLOBAL/HELP", "keys": ["?", "F1", "Help"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_OPEN_USER_DROPDOWN", "keys": ["M"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_OPEN_COMPOSE_POPUP", "keys": ["W", "C", "New"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_REFRESH", "keys": ["{meta} + R"] },
+				{ "label": "GLOBAL/SEARCH", "keys": ["/"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_ADVANCED_SEARCH", "keys": ["{meta} + F"] }
+			]
+		},
+		{
+			"id": "folder-list",
+			"label": "SHORTCUTS_HELP/TAB_FOLDER_LIST",
+			"rows": [
+				{ "label": "SHORTCUTS_HELP/LABEL_FOLDER_PREVIOUS_NEXT", "keys": ["Up", "Down"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_FOLDER_OPEN", "keys": ["Enter", "Open"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_FOLDER_TOGGLE", "keys": ["Space"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SWITCH_TO_MESSAGE_LIST", "keys": ["Esc", "Tab", "Right"] }
+			]
+		},
+		{
+			"id": "message-list",
+			"label": "SHORTCUTS_HELP/TAB_MESSAGE_LIST",
+			"rows": [
+				{ "label": "SHORTCUTS_HELP/LABEL_CHECK_ALL", "keys": ["{meta} + A"] },
+				{ "label": "GLOBAL/TO_ARCHIVE", "keys": ["Z"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_DELETE", "keys": ["Delete"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_DELETE_PERMANENTLY", "keys": ["Shift + Delete"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_OPEN_THREAD", "keys": ["T"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_MOVE", "keys": ["Insert"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_READ", "keys": ["Q"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_UNREAD", "keys": ["U"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_IMPORTANT", "keys": ["I"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_FULLSCREEN_ENTER", "keys": ["Enter"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_VIEW_MESSAGE_ENTER", "keys": ["Enter", "Open"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SWITCH_TO_MESSAGE", "keys": ["Right", "Tab"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SWITCH_TO_FOLDER_LIST", "keys": ["Left", "Shift + Tab"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_CANCEL_SEARCH", "keys": ["Esc"] }
+			]
+		},
+		{
+			"id": "message-view",
+			"label": "SHORTCUTS_HELP/TAB_MESSAGE_VIEW",
+			"rows": [
+				{ "label": "SHORTCUTS_HELP/LABEL_REPLY", "keys": ["R", "Reply"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_REPLY_ALL", "keys": ["A", "Shift + Reply"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_FORWARD", "keys": ["F", "Fwd"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_FORWARD_MULTIPLY", "keys": ["Shift + F", "Shift + Fwd"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_MESSAGE_INFORMATION", "keys": ["{meta} + I"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_BLOCKQUOTES_TOGGLE", "keys": ["B"] },
+				{ "label": "MESSAGE/SWAP_COLORS", "keys": ["Shift + B"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_PREVIOUS_MESSAGE", "keys": ["{meta} + Up", "{meta} + Left"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_NEXT_MESSAGE", "keys": ["{meta} + Down", "{meta} + Right"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_FULLSCREEN_TOGGLE", "keys": ["Enter", "Open"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_EXIT_FULLSCREEN", "keys": ["Esc", "Close"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SWITCH_TO_LIST", "keys": ["Shift + Tab", "Esc"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_DELETE", "keys": ["Delete"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_DELETE_PERMANENTLY", "keys": ["Shift + Delete"] }
+			]
+		},
+		{
+			"id": "compose",
+			"label": "SHORTCUTS_HELP/TAB_COMPOSE",
+			"rows": [
+				{ "label": "SHORTCUTS_HELP/LABEL_OPEN_COMPOSE_POPUP", "keys": ["W", "C", "New"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SEND_MESSAGE", "keys": ["{meta} + Enter", "Send"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SAVE_MESSAGE", "keys": ["{meta} + S", "Save"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_MINIMIZE_COMPOSE_POPUP", "keys": ["Esc", "Close", "{meta} + Down"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_CLOSE_COMPOSE", "keys": ["Shift + Esc", "Shift + Close"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_OPEN_IDENTITIES_DROPDOWN", "keys": ["{meta} + M"] },
+				{ "label": "GLOBAL/CONTACTS", "keys": ["Alt + O"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SHOW_BCC", "keys": ["Alt + B"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SHOW_CC", "keys": ["Alt + C"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_SHOW_REPLY_TO", "keys": ["Alt + R"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_TOGGLE_SIGN", "keys": ["Alt + S"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_TOGGLE_ENCRYPT", "keys": ["Alt + E"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_TOGGLE_IMPORTANT", "keys": ["Alt + I"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_TOGGLE_REQUIRE_TLS", "keys": ["Alt + T"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_TOGGLE_READ_RECEIPT", "keys": ["Alt + L"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_TOGGLE_DELIVERY_RECEIPT", "keys": ["Alt + D"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_ATTACHMENTS_PANEL", "keys": ["Alt + A"] }
+			]
+		},
+		{
+			"id": "contacts",
+			"label": "GLOBAL/CONTACTS",
+			"rows": [
+				{ "label": "SHORTCUTS_HELP/LABEL_NEW_MESSAGE_TO_CONTACT", "keys": ["C", "W"] },
+				{ "label": "SHORTCUTS_HELP/LABEL_DELETE", "keys": ["Delete"] },
+				{ "label": "GLOBAL/HELP", "keys": ["F1", "Help"] }
+			]
+		}
+	]
+}

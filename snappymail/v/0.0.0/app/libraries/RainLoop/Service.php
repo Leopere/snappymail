@@ -164,7 +164,7 @@ abstract class Service
 			$sAppJsMin = $bAppDebug || $oConfig->Get('debug', 'javascript', false) ? '' : '.min';
 			$sAppCssMin = $bAppDebug || $oConfig->Get('debug', 'css', false) ? '' : '.min';
 
-			$sFaviconUrl = (string) $oConfig->Get('webmail', 'favicon_url', '');
+			$sFaviconUrl = \SnappyMail\Branding::faviconUrl((string) $oConfig->Get('webmail', 'favicon_url', ''));
 
 			$sFaviconPngLink = $sFaviconUrl ?: Utils::WebStaticPath('apple-touch-icon.png');
 			$sAppleTouchLink = $sFaviconUrl ? '' : Utils::WebStaticPath('apple-touch-icon.png');
@@ -177,9 +177,11 @@ abstract class Service
 				'{{BaseAppThemeName}}' => $sThemeName,
 				'{{BaseAppFaviconPngLinkTag}}' => $sFaviconPngLink ? '<link type="image/png" rel="shortcut icon" href="'.$sFaviconPngLink.'">' : '',
 				'{{BaseAppFaviconTouchLinkTag}}' => $sAppleTouchLink ? '<link type="image/png" rel="apple-touch-icon" href="'.$sAppleTouchLink.'">' : '',
-				'{{BaseAppManifestLink}}' => Utils::WebStaticPath('manifest.json'),
-				'{{BaseFavIconSvg}}' => $sFaviconUrl ? '' : Utils::WebStaticPath('favicon.svg'),
-				'{{LoadingDescriptionEsc}}' => \htmlspecialchars($oConfig->Get('webmail', 'loading_description', 'SnappyMail'), ENT_QUOTES|ENT_IGNORE, 'UTF-8'),
+				'{{BaseAppManifestLink}}' => Utils::WebPath() . '?/manifest',
+				'{{BaseFavIconSvg}}' => $sFaviconUrl ?: Utils::WebStaticPath('favicon.svg'),
+				'{{BaseThemeColor}}' => \SnappyMail\Branding::themeColor(),
+				'{{BaseBrandCss}}' => \SnappyMail\Branding::cssVariables(),
+				'{{LoadingDescriptionEsc}}' => \htmlspecialchars(\SnappyMail\Branding::loadingDescription($oConfig->Get('webmail', 'loading_description', '')), ENT_QUOTES|ENT_IGNORE, 'UTF-8'),
 				'{{BaseAppAdmin}}' => $bAdmin ? 1 : 0
 			);
 
@@ -210,7 +212,8 @@ abstract class Service
 				$aTemplateParameters['{{BaseAppBootCss}}'] = \file_get_contents(APP_VERSION_ROOT_PATH.'static/css/boot'.$sAppCssMin.'.css');
 				$aTemplateParameters['{{BaseAppBootScript}}'] = \file_get_contents(APP_VERSION_ROOT_PATH.'static/js'.($sAppJsMin ? '/min' : '').'/boot'.$sAppJsMin.'.js');
 				$aTemplateParameters['{{BaseAppMainCssLink}}'] = Utils::WebStaticPath('css/'.($bAdmin ? 'admin' : 'app').$sAppCssMin.'.css');
-				$aTemplateParameters['{{BaseAppThemeCss}}'] = \preg_replace('/\\s*([:;{},]+)\\s*/s', '$1', $oActions->compileCss($sThemeName, $bAdmin));
+				$aTemplateParameters['{{BaseAppThemeCss}}'] = \preg_replace('/\\s*([:;{},]+)\\s*/s', '$1',
+					$oActions->compileCss($sThemeName, $bAdmin) . $aTemplateParameters['{{BaseBrandCss}}']);
 				$aTemplateParameters['{{BaseLanguage}}'] = $oActions->compileLanguage($sLanguage, $bAdmin);
 				$aTemplateParameters['{{BaseTemplates}}'] = Utils::ClearHtmlOutput($oServiceActions->compileTemplates($bAdmin));
 				$aTemplateParameters['{{NO_SCRIPT_DESC}}'] = \nl2br($oActions->StaticI18N('NO_SCRIPT_TITLE') . "\n" . $oActions->StaticI18N('NO_SCRIPT_DESC'));

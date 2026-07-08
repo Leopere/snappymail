@@ -15,12 +15,17 @@ import { Passphrases } from 'Storage/Passphrases';
 import { baseCollator } from 'Common/Translator';
 
 const
-	findGnuPGKey = (keys, query/*, sign*/) =>
+	canEncryptWithKey = key =>
+		key.can_encrypt || key.subkeys.some(subkey => subkey.can_encrypt),
+
+	findGnuPGKey = (keys, query, sign) =>
 		keys.find(key =>
-//			key[sign ? 'can_sign' : 'can_decrypt']
-			(key.can_sign || key.can_decrypt)
+			(sign ? key.can_sign : (key.can_sign || key.can_decrypt))
 			&& (key.for(query) || key.subkeys.find(key => query == key.keyid || query == key.fingerprint))
-		);
+		),
+	findGnuPGPublicKey = (publicKeys, privateKeys, email) =>
+		publicKeys.find(key => canEncryptWithKey(key) && key.for(email))
+		|| privateKeys.find(key => canEncryptWithKey(key) && key.for(email));
 
 export const GnuPGUserStore = new class {
 	constructor() {
@@ -37,86 +42,91 @@ export const GnuPGUserStore = new class {
 		this.keyring = null;
 		this.publicKeys([]);
 		this.privateKeys([]);
-		SettingsCapa('GnuPG')
-		&& Remote.request('GnupgGetKeys',
-			(iError, oData) => {
-				if (oData?.Result) {
-					this.keyring = oData.Result;
-					const initKey = (key, isPrivate) => {
-						const aEmails = [];
-						key.id = key.subkeys[0].keyid;
-						key.fingerprint = key.subkeys[0].fingerprint;
-						key.uids.forEach(uid => uid.email && aEmails.push(uid.email));
-						key.emails = aEmails;
-						key.for = email => aEmails.includes(IDN.toASCII(email));
-						key.askDelete = ko.observable(false);
-						key.openForDeletion = ko.observable(null).askDeleteHelper();
-						key.remove = () => {
-							if (key.askDelete()) {
-								Remote.request('GnupgDeleteKey',
-									(iError, oData) => {
-										if (oData) {
-											if (iError) {
-												alert(oData.message);
-											} else if (oData.Result) {
-												isPrivate
-													? this.privateKeys.remove(key)
-													: this.publicKeys.remove(key);
+		if (!SettingsCapa('GnuPG')) {
+			return Promise.resolve(false);
+		}
+		return new Promise(resolve =>
+			Remote.request('GnupgGetKeys',
+				(iError, oData) => {
+					if (oData?.Result) {
+						this.keyring = oData.Result;
+						const initKey = (key, isPrivate) => {
+							const aEmails = [];
+							key.id = key.subkeys[0].keyid;
+							key.fingerprint = key.subkeys[0].fingerprint;
+							key.uids.forEach(uid => uid.email && aEmails.push(IDN.toASCII(uid.email).toLowerCase()));
+							key.emails = aEmails;
+							key.for = email => aEmails.includes(IDN.toASCII(email || '').toLowerCase());
+							key.askDelete = ko.observable(false);
+							key.openForDeletion = ko.observable(null).askDeleteHelper();
+							key.remove = () => {
+								if (key.askDelete()) {
+									Remote.request('GnupgDeleteKey',
+										(iError, oData) => {
+											if (oData) {
+												if (iError) {
+													alert(oData.message);
+												} else if (oData.Result) {
+													isPrivate
+														? this.privateKeys.remove(key)
+														: this.publicKeys.remove(key);
+												}
 											}
-										}
-									}, {
-										keyId: key.id,
-										isPrivate: isPrivate
-									}
-								);
-							}
-						};
-						if (isPrivate) {
-							key.password = async btnTxt => {
-								const pass = await Passphrases.ask(key,
-									'GnuPG key<br>' + key.id + ' ' + key.emails[0],
-									btnTxt
-								);
-								pass && pass.remember && Passphrases.handle(key, pass.password);
-								return pass?.password;
-							};
-						}
-						key.fetch = async callback => {
-							if (key.armor) {
-								callback && callback();
-							} else {
-								let pass = isPrivate ? await key.password('OPENPGP/POPUP_VIEW_TITLE') : '';
-								if (null != pass) try {
-									const result = await Remote.post('GnupgExportKey', null, {
+										}, {
 											keyId: key.id,
-											isPrivate: isPrivate,
-											passphrase: pass
-										});
-									if (result?.Result) {
-										key.armor = result.Result;
-										callback && callback();
-									} else {
-										Passphrases.delete(key);
-									}
-								} catch (e) {
-									Passphrases.delete(key);
-									alert(e.message);
+											isPrivate: isPrivate
+										}
+									);
 								}
+							};
+							if (isPrivate) {
+								key.password = async btnTxt => {
+									const pass = await Passphrases.ask(key,
+										'GnuPG key<br>' + key.id + ' ' + key.emails[0],
+										btnTxt
+									);
+									pass && pass.remember && Passphrases.handle(key, pass.password);
+									return pass?.password;
+								};
 							}
-							return key.armor;
-						};
-						key.view = () => key.fetch(() => showScreenPopup(OpenPgpKeyPopupView, [key]));
-						return key;
-					},
-					collator = baseCollator(),
-					sort = keys => keys.sort(
-						(a, b) => collator.compare(a.emails[0], b.emails[0]) || collator.compare(a.id, b.id)
-					);
-					this.publicKeys(sort(oData.Result.public.map(key => initKey(key, 0))));
-					this.privateKeys(sort(oData.Result.private.map(key => initKey(key, 1))));
-					console.log('gnupg ready');
+							key.fetch = async callback => {
+								if (key.armor) {
+									callback && callback();
+								} else {
+									let pass = isPrivate ? await key.password('OPENPGP/POPUP_VIEW_TITLE') : '';
+									if (null != pass) try {
+										const result = await Remote.post('GnupgExportKey', null, {
+												keyId: key.id,
+												isPrivate: isPrivate,
+												passphrase: pass
+											});
+										if (result?.Result) {
+											key.armor = result.Result;
+											callback && callback();
+										} else {
+											Passphrases.delete(key);
+										}
+									} catch (e) {
+										Passphrases.delete(key);
+										alert(e.message);
+									}
+								}
+								return key.armor;
+							};
+							key.view = () => key.fetch(() => showScreenPopup(OpenPgpKeyPopupView, [key]));
+							return key;
+						},
+						collator = baseCollator(),
+						sort = keys => keys.sort(
+							(a, b) => collator.compare(a.emails[0], b.emails[0]) || collator.compare(a.id, b.id)
+						);
+						this.publicKeys(sort(oData.Result.public.map(key => initKey(key, 0))));
+						this.privateKeys(sort(oData.Result.private.map(key => initKey(key, 1))));
+						console.log('gnupg ready');
+					}
+					resolve(oData?.Result || false);
 				}
-			}
+			)
 		);
 	}
 
@@ -135,14 +145,24 @@ export const GnuPGUserStore = new class {
 		keyPair.inGnuPG
 	 */
 	storeKeyPair(keyPair, callback) {
-		Remote.request('PgpStoreKeyPair',
-			(iError, oData) => {
-				if (oData?.Result) {
-//					this.gnupgKeyring = oData.Result;
-				}
-				callback?.(iError, oData);
-			}, keyPair
+		return new Promise(resolve =>
+			Remote.request('PgpStoreKeyPair',
+				(iError, oData) => {
+					if (oData?.Result) {
+//						this.gnupgKeyring = oData.Result;
+					}
+					callback?.(iError, oData);
+					resolve(oData);
+				}, keyPair
+			)
 		);
+	}
+
+	rememberPassphraseFor(email, passphrase) {
+		email = IDN.toASCII((email || '').trim());
+		email && passphrase && this.privateKeys()
+			.filter(key => key.for(email))
+			.forEach(key => Passphrases.handle(key, passphrase));
 	}
 
 	/**
@@ -151,22 +171,34 @@ export const GnuPGUserStore = new class {
 	hasPublicKeyForEmails(recipients) {
 		const count = recipients.length,
 			length = count ? recipients.filter(email =>
-//				(key.can_verify || key.can_encrypt) &&
-				this.publicKeys.find(key => key.for(email))
+				this.getEncryptionKeyForEmail(email)
 			).length : 0;
 		return length && length === count;
+	}
+
+	getEncryptionKeyForEmail(email) {
+		return findGnuPGPublicKey(this.publicKeys(), this.privateKeys(), email);
 	}
 
 	getPublicKeyFingerprints(recipients) {
 		const fingerprints = [];
 		recipients.forEach(email => {
-			fingerprints.push(this.publicKeys.find(key => key.for(email)).fingerprint);
+			const key = this.getEncryptionKeyForEmail(email);
+			key && fingerprints.push(key.fingerprint);
 		});
 		return fingerprints;
 	}
 
-	getPrivateKeyFor(query/*, sign*/) {
-		return findGnuPGKey(this.privateKeys, query/*, sign*/);
+	getPrivateKeyFor(query, sign) {
+		return findGnuPGKey(this.privateKeys, query, sign);
+	}
+
+	hasRememberedDecryptionKey(message) {
+		const pgpInfo = message?.pgpEncrypted?.();
+		return !!pgpInfo && [message.to[0]?.email].concat(pgpInfo.keyIds || []).some(id => {
+			const key = id && findGnuPGKey(this.privateKeys, id);
+			return key && Passphrases.has(key);
+		});
 	}
 
 	async decrypt(message) {

@@ -66,14 +66,14 @@ export class OpenPgpGeneratePopupView extends AbstractViewPopup {
 		this.submitRequest(true);
 		this.submitError('');
 
-		openpgp.generateKey(cfg).then(keyPair => {
+		openpgp.generateKey(cfg).then(async keyPair => {
 			if (keyPair) {
 				const fn = () => {
 					this.submitRequest(false);
 					this.close();
 				};
 
-				OpenPGPUserStore.storeKeyPair(keyPair);
+				await OpenPGPUserStore.storeKeyPair(keyPair, cfg.passphrase);
 
 				keyPair.onServer = (this.backupPublicKey() ? 1 : 0) + (this.backupPrivateKey() ? 2 : 0);
 				keyPair.inGnuPG = (this.saveGnuPGPublic() ? 1 : 0) + (this.saveGnuPGPrivate() ? 2 : 0);

@@ -5,6 +5,7 @@ import { getNotification, translatorReload, convertLangName } from 'Common/Trans
 import { addObservablesTo, addComputablesTo, addSubscribablesTo } from 'External/ko';
 
 import { LanguageStore } from 'Stores/Language';
+import { PgpUserStore } from 'Stores/User/Pgp';
 
 import * as Local from 'Storage/Client';
 
@@ -122,6 +123,7 @@ export class LoginUserView extends AbstractViewLogin {
 							Notifications.UnknownError));
 						this.submitErrorAdditional(oData?.messageAdditional || oData?.message);
 					} else {
+						oData?.Result?.Auth && PgpUserStore.rememberLoginPassword(email, this.password());
 						rl.setData(oData.Result);
 					}
 				},

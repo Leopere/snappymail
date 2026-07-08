@@ -1,10 +1,10 @@
 {
-  "name": "snappymail",
-  "title": "SnappyMail",
-  "description": "Simple, modern & fast web-based email client",
+  "name": "snappymail-brandable",
+  "title": "Brandable SnappyMail",
+  "description": "Brandable web-based email client forked from SnappyMail",
   "private": true,
   "version": "2.38.2",
-  "homepage": "https://snappymail.eu",
+  "homepage": "https://github.com/Leopere/snappymail-brandable",
   "author": {
     "name": "DJ Maze",
     "email": "support@snappymail.eu",
@@ -12,9 +12,19 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/the-djmaze/snappymail.git"
+    "url": "git://github.com/Leopere/snappymail-brandable.git"
   },
   "scripts": {
+    "build": "gulp build",
+    "check": "gulp lint",
+    "dev": "node scripts/dev-local.js",
+    "dev:tunnel": "SNAPPYMAIL_TUNNEL=1 node scripts/dev-local.js",
+    "provision:local-gpg": "node scripts/provision-local-internal-gpg.cjs",
+    "test": "npm run test:security && npm run test:ui",
+    "test:security": "node tests/security/html-sanitizer.cjs",
+    "test:ui": "docker compose up -d --build snappymail db docker-mailserver && node scripts/refresh-tunnel-if-running.js && npm run provision:local-gpg && playwright test tests/playwright/snappymail-ui.spec.cjs --reporter=line",
+    "verify": "npm run build && npm run check && npm test",
+    "watch": "node scripts/watch-static.js",
     "watch-css": "gulp watchCss"
   },
   "license": "SEE LICENSE IN LICENSE",
@@ -25,7 +35,7 @@
     }
   ],
   "bugs": {
-    "url": "https://github.com/the-djmaze/snappymail/issues"
+    "url": "https://github.com/Leopere/snappymail-brandable/issues"
   },
   "keywords": [
     "webmail",
@@ -62,9 +72,23 @@
     "gulp-rollup-2": "^1.2.1",
     "gulp-size": "^3.0.0",
     "gulp-terser": "^2.1.0",
-    "rollup": "^2.56.3",
+    "rollup": "^2.80.0",
     "rollup-plugin-external-globals": "^0.6.1",
     "rollup-plugin-includepaths": "^0.2.4",
     "rollup-plugin-terser": "^7.0.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  },
+  "resolutions": {
+    "brace-expansion": "1.1.13",
+    "eslint/cross-spawn": "7.0.5",
+    "gulp-eslint/eslint/cross-spawn": "6.0.6",
+    "gulp-rollup-2/rollup": "2.80.0",
+    "js-yaml": "3.15.0",
+    "lodash": "4.17.21",
+    "micromatch": "4.0.8",
+    "minimatch": "3.1.4",
+    "picomatch": "2.3.2"
   }
 }

@@ -10,12 +10,16 @@ trait Themes
 	{
 		static $sTheme;
 		if (!$sTheme) {
-			$sTheme = $this->Config()->Get('webmail', 'theme', 'Default');
-			if (!$bAdmin
-			 && ($oAccount = $this->getAccountFromToken(false))
-			 && $this->GetCapa(Capa::THEMES)
-			 && ($oSettingsLocal = $this->SettingsProvider(true)->Load($oAccount))) {
-				$sTheme = (string) $oSettingsLocal->GetConf('Theme', $sTheme);
+			if (!$bAdmin && !\SnappyMail\Branding::allowThemes()) {
+				$sTheme = \SnappyMail\Branding::themeName();
+			} else {
+				$sTheme = $this->Config()->Get('webmail', 'theme', 'Default');
+				if (!$bAdmin
+				 && ($oAccount = $this->getAccountFromToken(false))
+				 && $this->GetCapa(Capa::THEMES)
+				 && ($oSettingsLocal = $this->SettingsProvider(true)->Load($oAccount))) {
+					$sTheme = (string) $oSettingsLocal->GetConf('Theme', $sTheme);
+				}
 			}
 			$sTheme = $this->ValidateTheme($sTheme);
 		}
@@ -93,13 +97,18 @@ trait Themes
 			\array_push($aCache, 'Clear');
 		}
 
+		$sBrandTheme = \SnappyMail\Branding::themeName();
+		if (\in_array($sBrandTheme, $aCache)) {
+			return array($sBrandTheme);
+		}
+
 		return $aCache;
 	}
 
 	public function ValidateTheme(string $sTheme): string
 	{
 		if (!\in_array($sTheme, $this->GetThemes())) {
-			$sTheme = $this->Config()->Get('webmail', 'theme', 'Default');
+			$sTheme = \SnappyMail\Branding::themeName();
 			if (!\in_array($sTheme, $this->GetThemes())) {
 				$sTheme = 'Default';
 			}

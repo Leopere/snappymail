@@ -54,6 +54,7 @@ import { AbstractViewPopup } from 'Knoin/AbstractViews';
 import { FolderSystemPopupView } from 'View/Popup/FolderSystem';
 import { AskPopupView } from 'View/Popup/Ask';
 import { ContactsPopupView } from 'View/Popup/Contacts';
+import { KeyboardShortcutsHelpPopupView } from 'View/Popup/KeyboardShortcutsHelp';
 
 /*
 import { ThemeStore } from 'Stores/Theme';
@@ -67,9 +68,22 @@ const
 
 	tpl = createElement('template'),
 
+	normalizeEmail = email => IDN.toASCII((email || '').trim()).toLowerCase(),
+
+	emailDomain = email => {
+		email = normalizeEmail(email);
+		const at = email.lastIndexOf('@');
+		return 0 < at ? email.slice(at + 1) : '';
+	},
+
 	base64_encode = text => text ? b64Encode(text).match(/.{1,76}/g).join('\r\n') : '',
 
 	getEmail = value => addressparser(value)[0]?.email || false,
+
+	emailsFromAddressFields = fields =>
+		fields.reduce((result, value) =>
+			result.concat(addressparser(value).map(item => normalizeEmail(item.email)).filter(email => email))
+		, []).validUnique(),
 
 	/**
 	 * @param {Array} aList
@@ -302,6 +316,13 @@ export class ComposePopupView extends AbstractViewPopup {
 		this.doClose = this.doClose.debounce(200);
 
 		this.iTimer = 0;
+		this.internalGnuPGAuto = false;
+		this.syncGnuPGPolicyFromKeyring = () => {
+			this.initSign();
+			this.initEncrypt();
+		};
+		GnuPGUserStore.publicKeys.subscribe(this.syncGnuPGPolicyFromKeyring);
+		GnuPGUserStore.privateKeys.subscribe(this.syncGnuPGPolicyFromKeyring);
 
 		addComputablesTo(this, {
 			sendButtonSuccess: () => !this.sendError() && !this.sendSuccessButSaveError(),
@@ -362,6 +383,7 @@ export class ComposePopupView extends AbstractViewPopup {
 					this.from(value.toString());
 					this.doEncrypt(value.pgpEncrypt() || SettingsUserStore.pgpEncrypt());
 					this.doSign(value.pgpSign() || SettingsUserStore.pgpSign());
+					this.syncInternalGnuPGPolicy();
 				}
 			},
 
@@ -1099,7 +1121,11 @@ export class ComposePopupView extends AbstractViewPopup {
 
 	onBuild(dom) {
 		// initUploader
-		const oJua = new Jua({
+		const toggleOption = option => {
+				option(!option());
+				return false;
+			},
+			oJua = new Jua({
 				action: serverRequest('Upload'),
 				clickElement: dom.querySelector('#composeUploadButton'),
 				dragAndDropElement: dom.querySelector('.b-attachment-place')
@@ -1234,6 +1260,30 @@ export class ComposePopupView extends AbstractViewPopup {
 			return false;
 		});
 
+		addShortcut('f1,help', '', ScopeCompose, () => {
+			showScreenPopup(KeyboardShortcutsHelpPopupView);
+			return false;
+		});
+
+		addShortcut('o', 'alt', ScopeCompose, () => {
+			this.contactsCommand();
+			return false;
+		});
+
+		addShortcut('b', 'alt', ScopeCompose, () => toggleOption(this.showBcc));
+		addShortcut('c', 'alt', ScopeCompose, () => toggleOption(this.showCc));
+		addShortcut('r', 'alt', ScopeCompose, () => toggleOption(this.showReplyTo));
+		addShortcut('i', 'alt', ScopeCompose, () => toggleOption(this.markAsImportant));
+		addShortcut('t', 'alt', ScopeCompose, () => toggleOption(this.requireTLS));
+		addShortcut('l', 'alt', ScopeCompose, () => toggleOption(this.requestReadReceipt));
+		addShortcut('d', 'alt', ScopeCompose, () => toggleOption(this.requestDsn));
+		addShortcut('s', 'alt', ScopeCompose, () => this.canSign() ? toggleOption(this.doSign) : false);
+		addShortcut('e', 'alt', ScopeCompose, () => this.canEncrypt() ? toggleOption(this.doEncrypt) : false);
+		addShortcut('a', 'alt', ScopeCompose, () => {
+			this.attachmentsArea();
+			return false;
+		});
+
 		this.editor(editor => editor[isPlainEditor()?'modePlain':'modeWysiwyg']());
 	}
 
@@ -1364,6 +1414,7 @@ export class ComposePopupView extends AbstractViewPopup {
 		this.showBcc(false);
 		this.showReplyTo(false);
 
+		this.internalGnuPGAuto = false;
 		this.doSign(SettingsUserStore.pgpSign());
 		this.doEncrypt(SettingsUserStore.pgpEncrypt());
 
@@ -1391,14 +1442,58 @@ export class ComposePopupView extends AbstractViewPopup {
 	}
 
 	allRecipients() {
-		return [
-				// From/sender is also recipient (Sent mailbox)
-//				this.currentIdentity().email,
-				this.from(),
-				this.to(),
-				this.cc(),
-				this.bcc()
-			].join(',').split(',').map(value => getEmail(value.trim())).validUnique();
+		const sender = normalizeEmail(getEmail(this.from()));
+		return [sender].concat(this.messageRecipients()).validUnique();
+	}
+
+	messageRecipients() {
+		return emailsFromAddressFields([this.to(), this.cc(), this.bcc()]);
+	}
+
+	internalDomainRecipients() {
+		const domain = emailDomain(getEmail(this.from())),
+			recipients = this.messageRecipients();
+		return domain && recipients.length && recipients.every(email => emailDomain(email) === domain)
+			? recipients
+			: [];
+	}
+
+	internalGnuPGState() {
+		const sender = normalizeEmail(getEmail(this.from())),
+			recipients = this.internalDomainRecipients().concat(sender).validUnique(),
+			signingKey = sender ? GnuPGUserStore.getPrivateKeyFor(sender, 1) : null;
+
+		return {
+			recipients: recipients,
+			signingKey: signingKey,
+			ready: !!(recipients.length && signingKey && GnuPGUserStore.hasPublicKeyForEmails(recipients))
+		};
+	}
+
+	syncInternalGnuPGPolicy() {
+		const state = this.internalGnuPGState();
+
+		if (state.ready) {
+			const signOptions = this.signOptions(),
+				encryptOptions = this.encryptOptions();
+
+			if ('GnuPG' !== signOptions[0]?.[0] || state.signingKey !== signOptions[0][1]) {
+				this.signOptions([['GnuPG', state.signingKey]].concat(signOptions.filter(option => 'GnuPG' !== option[0])));
+			}
+
+			if ('GnuPG' !== encryptOptions[0]) {
+				this.encryptOptions(['GnuPG'].concat(encryptOptions.filter(option => 'GnuPG' !== option)));
+			}
+
+			this.internalGnuPGAuto = true;
+			this.doSign(true);
+			this.doEncrypt(true);
+		} else if (this.internalGnuPGAuto) {
+			const identity = this.currentIdentity();
+			this.internalGnuPGAuto = false;
+			this.doSign(identity?.pgpSign?.() || SettingsUserStore.pgpSign());
+			this.doEncrypt(identity?.pgpEncrypt?.() || SettingsUserStore.pgpEncrypt());
+		}
 	}
 
 	/**
@@ -1409,14 +1504,15 @@ export class ComposePopupView extends AbstractViewPopup {
 		let options = [],
 			identity = this.currentIdentity(),
 			email = getEmail(this.from()),
-			key = OpenPGPUserStore.getPrivateKeyFor(email, 1);
-		key && options.push(['OpenPGP', key]);
-		key = GnuPGUserStore.getPrivateKeyFor(email, 1);
+			key = GnuPGUserStore.getPrivateKeyFor(email, 1);
 		key && options.push(['GnuPG', key]);
+		key = OpenPGPUserStore.getPrivateKeyFor(email, 1);
+		key && options.push(['OpenPGP', key]);
 		identity.smimeKeyValid() && identity.smimeCertificateValid() && identity.email === email
 			&& options.push(['S/MIME']);
 		console.dir({signOptions: options});
 		this.signOptions(options);
+		this.syncInternalGnuPGPolicy();
 	}
 
 	async initEncrypt() {
@@ -1450,6 +1546,7 @@ export class ComposePopupView extends AbstractViewPopup {
 
 		console.dir({encryptOptions:options});
 		this.encryptOptions(options);
+		this.syncInternalGnuPGPolicy();
 	}
 
 	async getMessageRequestParams(sSaveFolder, draft)
@@ -1509,10 +1606,24 @@ export class ComposePopupView extends AbstractViewPopup {
 				 **/
 				linkedData: []
 			},
-			recipients = draft ? [identity.email] : this.allRecipients(),
-			signOptions = !draft && this.doSign() && this.signOptions(),
-			encryptOptions = this.doEncrypt() && this.encryptOptions(),
 			isHtml = this.oEditor.isHtml();
+		let
+			recipients = draft ? [identity.email] : this.allRecipients(),
+			signOptions = (!draft && this.doSign() && this.signOptions()) || [],
+			encryptOptions = (this.doEncrypt() && this.encryptOptions()) || [];
+
+		if (!draft && this.internalDomainRecipients().length) {
+			const state = this.internalGnuPGState();
+			if (!state.ready) {
+				throw i18n('COMPOSE/ERROR_INTERNAL_GNUPG_REQUIRED');
+			}
+
+			recipients = state.recipients;
+			signOptions = [['GnuPG', state.signingKey]];
+			encryptOptions = ['GnuPG'];
+			this.doSign(true);
+			this.doEncrypt(true);
+		}
 
 		if (isHtml) {
 			tpl.innerHTML = Text;

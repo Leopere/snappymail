@@ -3,6 +3,8 @@
 /api.php
 /*.log
 /snappymail/v/0.0.0/static/*
+!/snappymail/v/0.0.0/static/brand/
+!/snappymail/v/0.0.0/static/brand/*
 /node_modules
 /build/local
 /build/dist
@@ -20,7 +22,10 @@
 /issues
 .idea/
 .env
+/docker-compose.override.yml
 /test
+/test-results
+/tmp
 /public_html
 /vendors/knockout/spec
 /vendors/openpgp-5

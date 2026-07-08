@@ -16,10 +16,11 @@ import Remote from 'Remote/User/Fetch';
 import { EmailModel } from 'Model/Email';
 import { ContactModel } from 'Model/Contact';
 
-import { decorateKoCommands } from 'Knoin/Knoin';
+import { decorateKoCommands, showScreenPopup } from 'Knoin/Knoin';
 import { AbstractViewPopup } from 'Knoin/AbstractViews';
 
 import { AskPopupView } from 'View/Popup/Ask';
+import { KeyboardShortcutsHelpPopupView } from 'View/Popup/KeyboardShortcutsHelp';
 
 const
 	CONTACTS_PER_PAGE = 50,
@@ -278,6 +279,11 @@ export class ContactsPopupView extends AbstractViewPopup {
 
 		registerShortcut('c,w', '', ScopeContacts, () => {
 			this.newMessageCommand();
+			return false;
+		});
+
+		registerShortcut('f1,help', '', ScopeContacts, () => {
+			showScreenPopup(KeyboardShortcutsHelpPopupView);
 			return false;
 		});
 

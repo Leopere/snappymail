@@ -55,6 +55,12 @@
 		color: #fff;
 	}
 
+	.panelRestore {
+		height: 34px;
+		margin: 10px auto;
+		width: 34px;
+	}
+
 	.b-footer {
 		padding: 10px @rlLowMargin;
 		overflow: hidden;
@@ -203,11 +209,13 @@
 }
 
 html.rl-left-panel-disabled {
-	.buttonComposeText,
-	.buttonContacts {
-		display: none;
-	}
-	#rl-left .buttonCompose {
-		width: auto;
+	.b-folders {
+		padding-right: 0;
+
+		.b-toolbar,
+		.b-content,
+		.b-footer {
+			display: none;
+		}
 	}
 }

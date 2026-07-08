@@ -112,6 +112,13 @@ export class SystemDropDownUserView extends AbstractViewRight {
 	}
 
 	onBuild() {
+		const showKeyboardShortcutsHelp = () => {
+			if (!this.viewModelDom.hidden) {
+				showScreenPopup(KeyboardShortcutsHelpPopupView);
+				return false;
+			}
+		};
+
 		registerShortcut('m', '', [ScopeMessageList, ScopeMessageView, ScopeSettings], () => {
 			if (!this.viewModelDom.hidden) {
 //				exitFullscreen();
@@ -121,11 +128,7 @@ export class SystemDropDownUserView extends AbstractViewRight {
 		});
 
 		// shortcuts help
-		registerShortcut('?,f1,help', '', [ScopeMessageList, ScopeMessageView, ScopeSettings], () => {
-			if (!this.viewModelDom.hidden) {
-				showScreenPopup(KeyboardShortcutsHelpPopupView);
-				return false;
-			}
-		});
+		registerShortcut('f1,help', '', [ScopeMessageList, ScopeMessageView, ScopeSettings], showKeyboardShortcutsHelp);
+		registerShortcut('?,/', 'shift', [ScopeMessageList, ScopeMessageView, ScopeSettings], showKeyboardShortcutsHelp);
 	}
 }

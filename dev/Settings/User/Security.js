@@ -1,6 +1,6 @@
 import { koComputable } from 'External/ko';
 
-import { SettingsCapa } from 'Common/Globals';
+import { SettingsCapa, SettingsGet } from 'Common/Globals';
 import { i18n, translateTrigger, relativeTime } from 'Common/Translator';
 
 import { AbstractViewSettings } from 'Knoin/AbstractViews';
@@ -52,6 +52,33 @@ export class UserSettingsSecurity extends AbstractViewSettings {
 		this.canOpenPGP = SettingsCapa('OpenPGP');
 		this.canGnuPG = GnuPGUserStore.isSupported();
 		this.canMailvelope = !!window.mailvelope;
+
+		this.openpgpPrivateCount = koComputable(() => this.openpgpkeysPrivate().length);
+		this.openpgpPublicCount = koComputable(() => this.openpgpkeysPublic().length);
+		this.gnupgPrivateCount = koComputable(() => this.gnupgPrivateKeys().length);
+		this.gnupgPublicCount = koComputable(() => this.gnupgPublicKeys().length);
+		this.encryptionReady = koComputable(() => !!(this.openpgpPrivateCount() || this.gnupgPrivateCount()));
+		this.encryptionEmail = koComputable(() => {
+			const key = this.openpgpkeysPrivate()[0] || this.gnupgPrivateKeys()[0];
+			return key?.emails?.[0] || SettingsGet('Email') || '';
+		});
+		this.encryptionStatus = koComputable(() =>
+			this.encryptionReady()
+				? 'Ready'
+				: (this.canOpenPGP ? 'Setting up' : 'Unavailable')
+		);
+		this.encryptionSummary = koComputable(() => {
+			const count = this.openpgpPrivateCount() || this.gnupgPrivateCount(),
+				email = this.encryptionEmail();
+			return this.encryptionReady()
+				? `${email}${email ? ' - ' : ''}${count} private key${1 === count ? '' : 's'}`
+				: (email || this.encryptionStatus());
+		});
+		this.encryptionStatusClass = koComputable(() => ({
+			ready: this.encryptionReady(),
+			pending: !this.encryptionReady() && this.canOpenPGP,
+			unavailable: !this.encryptionReady() && !this.canOpenPGP
+		}));
 	}
 
 	addOpenPgpKey() {

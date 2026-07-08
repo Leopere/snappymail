@@ -9,6 +9,7 @@ const
 
 	htmlre = /[&<>"']/g,
 	httpre = /^(https?:)?\/\//i,
+	safeHrefProtocols = ['http:', 'https:', 'mailto:', 'tel:'],
 	htmlmap = {
 		'&': '&amp;',
 		'<': '&lt;',
@@ -77,6 +78,28 @@ const
 	urlGetParam = (url, name) => new URL(url).searchParams.get(name) || url,
 	base64Url = data => atob(data.replace(/_/g,'/').replace(/-/g,'+')),
 	decode = decodeURIComponent,
+	hasUnsafeHrefChar = value => {
+		let i = value.length;
+		while (i--) {
+			const code = value.charCodeAt(i);
+			if (32 >= code || 127 === code) {
+				return true;
+			}
+		}
+		return false;
+	},
+	safeExternalHref = value => {
+		value = value?.trim?.() || '';
+		if (!value || hasUnsafeHrefChar(value)) {
+			return '';
+		}
+		try {
+			value = value.startsWith('//') ? 'https:' + value : value;
+			return safeHrefProtocols.includes(new URL(value).protocol) ? value : '';
+		} catch (e) {
+			return '';
+		}
+	},
 	stripTracking = url => {
 		try {
 			let nurl = url
@@ -465,18 +488,18 @@ export const
 			}
 //			} else
 			if ('A' === name) {
-				value = oElement.href;
-				if (!/^([a-z]+):/i.test(value)) {
-					setAttribute('data-x-href-broken', value);
+				value = safeExternalHref(getAttribute('href'));
+				if (!value) {
+					setAttribute('data-x-href-broken', getAttribute('href'));
 					delAttribute('href');
 				} else {
-					oElement.href = stripTracking(value);
-					if (oElement.href != value) {
+					oElement.href = httpre.test(value) ? stripTracking(value) : value;
+					if (oElement.getAttribute('href') != value) {
 						result.tracking = true;
 						setAttribute('data-x-href-tracking', value);
 					}
 					setAttribute('target', '_blank');
-//					setAttribute('rel', 'external nofollow noopener noreferrer');
+					setAttribute('rel', 'external nofollow noopener noreferrer');
 				}
 				setAttribute('tabindex', '-1');
 				aColor && !oElement.style.color && (oElement.style.color = aColor);

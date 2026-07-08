@@ -1,7 +1,8 @@
 <div class="b-folders g-ui-user-select-none">
+	<a class="btn btn-thin fontastic toggleLeft panelRestore show-on-panel-disabled" data-bind="click: toggleLeftPanel" data-i18n="[title]SHORTCUTS_HELP/TAB_FOLDER_LIST"></a>
 	<div class="b-toolbar btn-toolbar">
 		<a class="btn buttonCompose" data-bind="click: composeClick, css: {'btn-warning': composeInEdit, 'btn-success': !composeInEdit()}" data-i18n="[title]FOLDER_LIST/BUTTON_NEW_MESSAGE">
-			<i class="icon-paper-plane"></i>
+			<i class="fontastic compose-plus">✚</i>
 			<span class="buttonComposeText" data-i18n="FOLDER_LIST/BUTTON_NEW_MESSAGE"></span>
 		</a>
 		<a class="btn buttonContacts fontastic" data-bind="visible: allowContacts, click: contactsClick" data-i18n="[title]GLOBAL/CONTACTS">📇</a>

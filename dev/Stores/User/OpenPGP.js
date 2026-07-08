@@ -133,31 +133,36 @@ export const OpenPGPUserStore = new class {
 	constructor() {
 		this.publicKeys = ko.observableArray();
 		this.privateKeys = ko.observableArray();
+		this.bootstrapPromise = null;
 	}
 
 	loadKeyrings() {
 		if (loaded()) {
-			loadOpenPgpKeys(publicKeysItem)
+			return loadOpenPgpKeys(publicKeysItem)
 			.then(keys => {
 				this.publicKeys(dedup(keys));
 				console.log('openpgp.js public keys loaded');
 			})
-			.finally(() => {
+			.then(() =>
 				loadOpenPgpKeys(privateKeysItem)
 				.then(keys => {
 					this.privateKeys(dedup(keys));
 					console.log('openpgp.js private keys loaded');
 				})
-				.finally(() => {
-					/*SettingsGet('loadBackupKeys') && */this.loadBackupKeys();
-				});
-			});
+			)
+			.then(() => /*SettingsGet('loadBackupKeys') && */this.loadBackupKeys());
 		}
+		return Promise.resolve();
 	}
 
 	loadBackupKeys() {
-		Remote.request('GetPGPKeys',
-			(iError, oData) => !iError && oData.Result && this.importKeys(oData.Result)
+		return new Promise(resolve =>
+			Remote.request('GetPGPKeys',
+				(iError, oData) => {
+					const keys = oData?.Result;
+					!iError && arrayLength(keys) ? this.importKeys(keys).finally(resolve) : resolve();
+				}
+			)
 		);
 	}
 
@@ -199,17 +204,70 @@ export const OpenPGPUserStore = new class {
 		keyPair.publicKey
 		keyPair.revocationCertificate
 	 */
-	storeKeyPair(keyPair) {
+	async storeKeyPair(keyPair, passphrase = '') {
 		if (loaded()) {
-			openpgp.readKey({armoredKey:keyPair.publicKey}).then(key => {
-				this.publicKeys.push(new OpenPgpKeyModel(keyPair.publicKey, key));
+			const publicKeys = this.publicKeys(),
+				privateKeys = this.privateKeys();
+			let publicKeyModel = null,
+				privateKeyModel = null;
+
+			if (keyPair.publicKey) {
+				const key = await openpgp.readKey({armoredKey:keyPair.publicKey});
+				publicKeyModel = new OpenPgpKeyModel(keyPair.publicKey, key);
+				publicKeys.find(entry => entry.fingerprint == publicKeyModel.fingerprint)
+				|| publicKeys.push(publicKeyModel);
+				this.publicKeys(sort(publicKeys));
 				storeOpenPgpKeys(this.publicKeys, publicKeysItem);
-			});
-			openpgp.readKey({armoredKey:keyPair.privateKey}).then(key => {
-				this.privateKeys.push(new OpenPgpKeyModel(keyPair.privateKey, key));
+			}
+
+			if (keyPair.privateKey) {
+				const key = await openpgp.readKey({armoredKey:keyPair.privateKey});
+				privateKeyModel = new OpenPgpKeyModel(keyPair.privateKey, key);
+				privateKeys.find(entry => entry.fingerprint == privateKeyModel.fingerprint)
+				|| privateKeys.push(privateKeyModel);
+				this.privateKeys(sort(privateKeys));
 				storeOpenPgpKeys(this.privateKeys, privateKeysItem);
-			});
+				passphrase && Passphrases.handle(privateKeyModel, passphrase);
+			}
+
+			return {
+				publicKey: publicKeyModel,
+				privateKey: privateKeyModel
+			};
 		}
+	}
+
+	/**
+	 * First-login bootstrap: create the user's local OpenPGP.js key without
+	 * interrupting the mailbox flow.
+	 */
+	ensureKeyForLogin(email, passphrase) {
+		email = IDN.toASCII((email || '').trim());
+		if (!loaded() || !email || !passphrase) {
+			return Promise.resolve(null);
+		}
+		const privateKey = this.getPrivateKeyFor(email);
+		if (privateKey) {
+			Passphrases.handle(privateKey, passphrase);
+			return Promise.resolve({ privateKey });
+		}
+		if (this.bootstrapPromise) {
+			return this.bootstrapPromise;
+		}
+
+		this.bootstrapPromise = openpgp.generateKey({
+			type: 'ecc',
+			userIDs: [{ name: '', email }],
+			passphrase
+		})
+		.then(keyPair => this.storeKeyPair(keyPair, passphrase).then(() => keyPair))
+		.catch(error => {
+			console.error('OpenPGP first-login bootstrap failed', error);
+			return null;
+		})
+		.finally(() => this.bootstrapPromise = null);
+
+		return this.bootstrapPromise;
 	}
 
 	/**

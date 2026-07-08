@@ -266,6 +266,7 @@ export class MailMessageView extends AbstractViewRight {
 					this.spfData(message.spf[0] || ['none', '', '']);
 					this.dmarcData(message.dmarc[0] || ['none', '', '']);
 					this.nowTracking(false);
+					this.autoDecryptMessage(message);
 				} else {
 					MessagelistUserStore.selectedMessage(null);
 
@@ -274,6 +275,8 @@ export class MailMessageView extends AbstractViewRight {
 					this.scrollMessageToTop();
 				}
 			},
+
+			messageLoadingThrottle: value => !value && this.autoDecryptMessage(),
 
 			showFullInfo: value => Local.set(ClientSideKeyNameMessageHeaderFullInfo, value ? '1' : '0')
 		});
@@ -306,6 +309,10 @@ export class MailMessageView extends AbstractViewRight {
 
 	toggleFullInfo() {
 		this.showFullInfo(!this.showFullInfo());
+	}
+
+	autoDecryptMessage(message = currentMessage()) {
+		message && GnuPGUserStore.hasRememberedDecryptionKey(message) && message.decrypt();
 	}
 
 	closeMessage() {

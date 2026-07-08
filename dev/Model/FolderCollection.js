@@ -74,7 +74,11 @@ const
 			// no default
 		}
 		return def;
-	};
+	},
+
+	hideUnreadCount = type => type === FolderType.Archive
+		|| type === FolderType.Junk
+		|| type === FolderType.Trash;
 
 export const
 	/**
@@ -434,7 +438,7 @@ export class FolderModel extends AbstractModel {
 				return this.hasVisibleSubfolders() | visible;
 			},
 
-			unreadCount: () => this.unreadEmails() || null,
+			unreadCount: () => hideUnreadCount(this.type()) ? null : (this.unreadEmails() || null),
 /*
 			{
 				// TODO: make this optional in Settings

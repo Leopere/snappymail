@@ -60,6 +60,12 @@ class ServiceActions
 		return $this;
 	}
 
+	public function ServiceManifest() : string
+	{
+		\header('Content-Type: application/manifest+json; charset=utf-8');
+		return Utils::jsonEncode(\SnappyMail\Branding::manifest());
+	}
+
 /*
 	public function ServiceBackup() : void
 	{
