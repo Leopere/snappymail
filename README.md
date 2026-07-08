@@ -4,6 +4,8 @@ This repository is a private brandable hard-fork scaffold of SnappyMail. It adds
 
 See [BRANDING.md](BRANDING.md) for supported env vars and the local rebuild loop.
 
+Agent-facing repository skills live in [docs/agent-skills.md](docs/agent-skills.md). The OpenPGP WKD/GnuPG skill documents the interaction-free server-side encryption path and points at [docs/openpgp-wkd.md](docs/openpgp-wkd.md).
+
 Local development:
 
 ```sh
