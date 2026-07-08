@@ -20,6 +20,7 @@
     "dev": "node scripts/dev-local.js",
     "dev:tunnel": "SNAPPYMAIL_TUNNEL=1 node scripts/dev-local.js",
     "provision:local-gpg": "node scripts/provision-local-internal-gpg.cjs",
+    "provision:miab-gpg": "node scripts/provision-miab-domain-gnupg.cjs",
     "test": "npm run test:security && npm run test:ui",
     "test:security": "node tests/security/html-sanitizer.cjs",
     "test:ui": "docker compose up -d --build snappymail db docker-mailserver && node scripts/refresh-tunnel-if-running.js && npm run provision:local-gpg && playwright test tests/playwright/snappymail-ui.spec.cjs --reporter=line",

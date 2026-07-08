@@ -66,6 +66,50 @@ class ServiceActions
 		return Utils::jsonEncode(\SnappyMail\Branding::manifest());
 	}
 
+	public function ServiceWellKnown() : string
+	{
+		if ('openpgpkey' !== ($this->aPaths[1] ?? '')) {
+			\MailSo\Base\Http::StatusHeader(404);
+			return '';
+		}
+
+		$method = $this->oHttp->GetMethod();
+		if (!\in_array($method, ['GET', 'HEAD'], true)) {
+			\MailSo\Base\Http::StatusHeader(405);
+			return '';
+		}
+
+		$paths = \array_values($this->aPaths);
+		if ('policy' === ($paths[2] ?? '') || (!empty($paths[2]) && 'policy' === ($paths[3] ?? ''))) {
+			\header('Content-Type: text/plain; charset=utf-8');
+			return 'HEAD' === $method ? '' : '';
+		}
+
+		$domain = '';
+		$hash = '';
+		if ('hu' === ($paths[2] ?? '') && !empty($paths[3])) {
+			$domain = $this->oHttp->GetHost(false, true);
+			$hash = $paths[3];
+		} else if (!empty($paths[2]) && 'hu' === ($paths[3] ?? '') && !empty($paths[4])) {
+			$domain = $paths[2];
+			$hash = $paths[4];
+		}
+
+		$key = $domain && $hash
+			? \SnappyMail\PGP\Wkd::read($domain, $hash, $_GET['l'] ?? '')
+			: '';
+		if (!$key) {
+			\MailSo\Base\Http::StatusHeader(404);
+			return '';
+		}
+
+		\MailSo\Base\Http::setETag('wkd-' . \sha1($domain . '/' . $hash . '/' . $key));
+		\header('Cache-Control: public, max-age=3600');
+		\header('Content-Type: application/octet-stream');
+		\header('Content-Length: ' . \strlen($key));
+		return 'HEAD' === $method ? '' : $key;
+	}
+
 /*
 	public function ServiceBackup() : void
 	{

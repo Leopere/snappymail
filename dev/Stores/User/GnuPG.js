@@ -38,6 +38,7 @@ export const GnuPGUserStore = new class {
 		this.privateKeys = ko.observableArray();
 		this.bootstrapPromise = null;
 		this.loginPassphrases = new Map();
+		this.discoveryPromises = new Map();
 	}
 
 	loadKeyrings() {
@@ -289,6 +290,39 @@ export const GnuPGUserStore = new class {
 		return fingerprints;
 	}
 
+	async discoverPublicKeysForEmails(recipients) {
+		if (!this.isSupported()) {
+			return false;
+		}
+
+		const missing = recipients
+			.map(email => IDN.toASCII(email || '').toLowerCase())
+			.filter(email => email && !this.getEncryptionKeyForEmail(email))
+			.validUnique();
+		if (!missing.length) {
+			return false;
+		}
+
+		let imported = false;
+		await Promise.all(missing.map(email => {
+			if (!this.discoveryPromises.has(email)) {
+				this.discoveryPromises.set(email,
+					Remote.post('GnupgDiscoverKey', null, { email })
+						.then(response => imported = imported || !!response?.Result)
+						.catch(() => false)
+						.finally(() => this.discoveryPromises.delete(email))
+				);
+			}
+			return this.discoveryPromises.get(email);
+		}));
+
+		if (imported) {
+			await this.loadKeyrings();
+		}
+
+		return imported;
+	}
+
 	getPrivateKeyFor(query, sign) {
 		return findGnuPGKey(this.privateKeys, query, sign);
 	}
@@ -297,11 +331,11 @@ export const GnuPGUserStore = new class {
 		const pgpInfo = message?.pgpEncrypted?.();
 		return !!pgpInfo && [message.to[0]?.email].concat(pgpInfo.keyIds || []).some(id => {
 			const key = id && findGnuPGKey(this.privateKeys, id);
-			return key && this.passphraseForKey(key);
+			return !!key;
 		});
 	}
 
-	async decrypt(message) {
+	async decrypt(message, serverManaged = true) {
 		const
 			pgpInfo = message.pgpEncrypted();
 		if (pgpInfo) {
@@ -320,7 +354,7 @@ export const GnuPGUserStore = new class {
 					uid: message.uid,
 					partId: pgpInfo.partId,
 					keyId: key.id,
-					passphrase: await key.password('CRYPTO/DECRYPT'),
+					passphrase: this.passphraseForKey(key) || (serverManaged ? '' : await key.password('CRYPTO/DECRYPT')),
 					data: '' // message.plain() optional
 				}
 				if (null != params.passphrase) {
@@ -362,8 +396,8 @@ export const GnuPGUserStore = new class {
 		}
 	}
 
-	async sign(privateKey) {
-		return await privateKey.password('CRYPTO/SIGN');
+	async sign(privateKey, serverManaged = false) {
+		return this.passphraseForKey(privateKey) || (serverManaged ? '' : await privateKey.password('CRYPTO/SIGN'));
 	}
 
 };

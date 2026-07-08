@@ -71,6 +71,14 @@ abstract class Service
 			$sQuery = \substr($sQuery, 0, $iPos);
 		}
 		$sQuery = \trim(\trim($sQuery), ' /');
+		if ('' === $sQuery) {
+			$sPath = \parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
+			$sScript = $_SERVER['SCRIPT_NAME'] ?? '';
+			if ($sScript && \str_starts_with($sPath, $sScript . '/')) {
+				$sPath = \substr($sPath, \strlen($sScript) + 1);
+			}
+			$sQuery = \trim($sPath, ' /');
+		}
 		$aSubQuery = $_GET['q'] ?? null;
 		if (\is_array($aSubQuery)) {
 			$aSubQuery = \array_map(function ($sS) {
@@ -112,7 +120,9 @@ abstract class Service
 
 		$bIndex = true;
 		if (\count($aPaths) && !empty($aPaths[0]) && 'index' !== \strtolower($aPaths[0])) {
-			if ('mailto' !== \strtolower($aPaths[0]) && !\SnappyMail\HTTP\SecFetch::matchAnyRule($oConfig->Get('security', 'secfetch_allow', ''))) {
+			if (!\in_array(\strtolower($aPaths[0]), ['mailto', '.well-known'], true)
+			 && !\SnappyMail\HTTP\SecFetch::matchAnyRule($oConfig->Get('security', 'secfetch_allow', ''))
+			) {
 				\MailSo\Base\Http::StatusHeader(403);
 				echo $oServiceActions->ErrorTemplates('Access Denied.',
 					"Disallowed Sec-Fetch
@@ -123,7 +133,8 @@ abstract class Service
 				return false;
 			}
 
-			$sMethodName = 'Service'.\preg_replace('/@.+$/', '', $aPaths[0]);
+			$sServicePath = '.well-known' === \strtolower($aPaths[0]) ? 'WellKnown' : $aPaths[0];
+			$sMethodName = 'Service'.\preg_replace('/@.+$/', '', $sServicePath);
 			$sMethodExtra = \strpos($aPaths[0], '@') ? \preg_replace('/^[^@]+@/', '', $aPaths[0]) : '';
 
 			if (\method_exists($oServiceActions, $sMethodName) && \is_callable(array($oServiceActions, $sMethodName))) {

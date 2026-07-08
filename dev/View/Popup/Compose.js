@@ -1534,6 +1534,8 @@ export class ComposePopupView extends AbstractViewPopup {
 			options = [];
 
 		if (recipients.length) {
+			await GnuPGUserStore.discoverPublicKeysForEmails(recipients);
+
 			GnuPGUserStore.hasPublicKeyForEmails(recipients)
 			&& options.push('GnuPG');
 
@@ -1623,8 +1625,16 @@ export class ComposePopupView extends AbstractViewPopup {
 			isHtml = this.oEditor.isHtml();
 		let
 			recipients = draft ? [identity.email] : this.allRecipients(),
-			signOptions = (!draft && this.doSign() && this.signOptions()) || [],
-			encryptOptions = (this.doEncrypt() && this.encryptOptions()) || [];
+			internalGnuPG = false,
+			signOptions,
+			encryptOptions;
+
+		if (!draft && await GnuPGUserStore.discoverPublicKeysForEmails(recipients)) {
+			await this.initEncrypt();
+		}
+
+		signOptions = (!draft && this.doSign() && this.signOptions()) || [];
+		encryptOptions = (this.doEncrypt() && this.encryptOptions()) || [];
 
 		if (!draft && this.internalDomainRecipients().length) {
 			const state = this.internalGnuPGState();
@@ -1632,6 +1642,7 @@ export class ComposePopupView extends AbstractViewPopup {
 				throw i18n('COMPOSE/ERROR_INTERNAL_GNUPG_REQUIRED');
 			}
 
+			internalGnuPG = true;
 			recipients = state.recipients;
 			signOptions = [['GnuPG', state.signingKey]];
 			encryptOptions = ['GnuPG'];
@@ -1722,7 +1733,7 @@ export class ComposePopupView extends AbstractViewPopup {
 					}
 				} else if ('GnuPG' == signOptions[i][0]) {
 					// TODO: sign in PHP fails
-					let pass = await GnuPGUserStore.sign(signOptions[i][1]);
+					let pass = await GnuPGUserStore.sign(signOptions[i][1], internalGnuPG);
 					if (null != pass) {
 //						params.signData = data.toString();
 						params.signFingerprint = signOptions[i][1].fingerprint;

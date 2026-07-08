@@ -197,20 +197,29 @@ abstract class Keyservers
 	}
 
 	/** https://wiki.gnupg.org/WKD */
-	public static function wkd(string $host, string $keyid)
+	public static function wkd(string $email) : string
 	{
-/*
-		"https://{$host}/.well-known/openpgpkey/hu/{$keyid}";
-		/** https://wiki.gnupg.org/WKD
-			DNS:
-				openpgpkey.example.org. 300     IN      CNAME   wkd.keys.openpgp.org.
+		$parts = Wkd::emailParts($email);
+		if (!$parts) {
+			return '';
+		}
 
-			https://openpgpkey.example.com/.well-known/openpgpkey/example.com/hu/
-			else       https://example.com/.well-known/openpgpkey/hu/
+		[$local, $domain] = $parts;
+		$hash = Wkd::hash($local);
+		$paths = [
+			"https://{$domain}/.well-known/openpgpkey/hu/{$hash}?l=" . \rawurlencode($local),
+			"https://openpgpkey.{$domain}/.well-known/openpgpkey/{$domain}/hu/{$hash}?l=" . \rawurlencode($local)
+		];
 
-			An example: https://example.com/.well-known/openpgpkey/hu/it5sewh54rxz33fwmr8u6dy4bbz8itz4
-			is the direct method URL for "bernhard.reiter@example.com"
-		*/
+		foreach ($paths as $url) {
+			\SnappyMail\Log::debug('PGP', $url);
+			$oResponse = static::HTTP()->doRequest('GET', $url);
+			if ($oResponse && 200 === $oResponse->status && $oResponse->body) {
+				return $oResponse->body;
+			}
+		}
+
+		return '';
 	}
 
 	public static function dns(string $host, string $keyid)

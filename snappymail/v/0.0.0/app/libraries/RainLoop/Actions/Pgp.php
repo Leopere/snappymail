@@ -5,11 +5,91 @@ namespace RainLoop\Actions;
 use SnappyMail\PGP\Backup;
 use SnappyMail\PGP\Keyservers;
 use SnappyMail\PGP\GnuPG;
+use SnappyMail\PGP\Wkd;
 use MailSo\Imap\Enumerations\FetchType;
 use MailSo\Mime\Enumerations\Header as MimeEnumHeader;
 
 trait Pgp
 {
+	private function gnuPGKeyCanEncrypt(array $key) : bool
+	{
+		if (!empty($key['can_encrypt'])) {
+			return true;
+		}
+		foreach (($key['subkeys'] ?? []) as $subkey) {
+			if (!empty($subkey['can_encrypt']) && empty($subkey['expired']) && empty($subkey['revoked'])) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private function gnuPGKeyHasEmail(array $key, string $email) : bool
+	{
+		$parts = Wkd::emailParts($email);
+		$email = $parts ? $parts[0] . '@' . $parts[1] : \strtolower($email);
+		foreach (($key['uids'] ?? []) as $uid) {
+			foreach (['email', 'uid', 'name'] as $field) {
+				if (!empty($uid[$field]) && \preg_match('/[^\\s<>]+@[^\\s<>]+/', $uid[$field], $match)) {
+					$uidParts = Wkd::emailParts($match[0]);
+					if ($uidParts && $email === $uidParts[0] . '@' . $uidParts[1]) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	private function gnuPGHasUsablePublicKeyForEmail(\SnappyMail\PGP\PGPInterface $GPG, string $email) : bool
+	{
+		foreach (($GPG->allKeysInfo($email)['public'] ?? []) as $key) {
+			if ($this->gnuPGKeyCanEncrypt($key) && $this->gnuPGKeyHasEmail($key, $email)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private function publishGnuPGWkdIndex(\SnappyMail\PGP\PGPInterface $GPG) : int
+	{
+		$oAccount = $this->getMainAccountFromToken(false);
+		$accountParts = $oAccount ? Wkd::emailParts($oAccount->Email()) : null;
+		if (!$accountParts) {
+			return 0;
+		}
+		$accountDomain = $accountParts[1];
+		$count = 0;
+		$published = [];
+
+		foreach (($GPG->allKeysInfo('')['public'] ?? []) as $key) {
+			if (!$this->gnuPGKeyCanEncrypt($key)) {
+				continue;
+			}
+
+			$fingerprint = $key['subkeys'][0]['fingerprint'] ?: $key['subkeys'][0]['keyid'];
+			$publicKey = $fingerprint ? $GPG->export($fingerprint) : '';
+			if (!$publicKey) {
+				continue;
+			}
+
+			foreach (($key['uids'] ?? []) as $uid) {
+				foreach (['email', 'uid', 'name'] as $field) {
+					if (!empty($uid[$field]) && \preg_match('/[^\\s<>]+@[^\\s<>]+/', $uid[$field], $match)) {
+						$parts = Wkd::emailParts($match[0]);
+						$email = $parts ? $parts[0] . '@' . $parts[1] : '';
+						if ($email && empty($published[$email]) && $accountDomain === $parts[1] && Wkd::publish($email, $publicKey)) {
+							$published[$email] = true;
+							++$count;
+						}
+					}
+				}
+			}
+		}
+
+		return $count;
+	}
+
 	public function DoGetPGPKeys() : array
 	{
 		$result = [];
@@ -184,6 +264,7 @@ trait Pgp
 				$sName ? "{$sName} <{$sEmail}>" : $sEmail,
 				$oPassphrase
 			);
+			$fingerprint && $this->publishGnuPGWkdIndex($GPG);
 		}
 		return $this->DefaultResponse($fingerprint);
 	}
@@ -228,9 +309,36 @@ trait Pgp
 			$sKey = \trim($sKey);
 			$result['backup'] = $this->GetActionParam('backup', '') && Backup::PGPKey($sKey);
 			$result['gnuPG'] = $this->GetActionParam('gnuPG', '') && ($GPG = $this->GnuPG()) && $GPG->import($sKey);
+			if ($result['gnuPG'] && isset($GPG)) {
+				$result['wkd'] = $this->publishGnuPGWkdIndex($GPG);
+			}
 		}
 
 		return $this->DefaultResponse($result);
+	}
+
+	public function DoGnupgDiscoverKey() : array
+	{
+		$email = $this->GetActionParam('email', '');
+		$parts = Wkd::emailParts($email);
+		$GPG = $this->GnuPG();
+		if (!$parts || !$GPG) {
+			return $this->DefaultResponse(false);
+		}
+
+		$email = $parts[0] . '@' . $parts[1];
+		if ($this->gnuPGHasUsablePublicKeyForEmail($GPG, $email)) {
+			return $this->DefaultResponse(true);
+		}
+
+		$key = Keyservers::wkd($email);
+		if (!$key) {
+			return $this->DefaultResponse(false);
+		}
+
+		$import = $GPG->import($key);
+		$usable = $import && $this->gnuPGHasUsablePublicKeyForEmail($GPG, $email);
+		return $this->DefaultResponse($usable ? $import : false);
 	}
 
 	/**
