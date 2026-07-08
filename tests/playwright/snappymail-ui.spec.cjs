@@ -35,6 +35,16 @@ const waitForMailboxList = page => page.waitForFunction(() =>
 	timeout: 30000
 });
 
+const openCompose = async page => {
+	await waitForMailboxList(page);
+	const button = page.locator('#rl-left .buttonCompose').first();
+	await expect(button).toBeVisible();
+	await button.click();
+	const compose = page.locator('#V-PopupsCompose');
+	await expect(compose).toBeVisible({ timeout: 10000 });
+	return compose;
+};
+
 const buttonGaps = async (page, selector) => page.locator(selector).evaluate(toolbar => {
 	const rows = [];
 	const controls = Array.from(toolbar.querySelectorAll(':scope > .btn, :scope > .btn-group > .btn'));
@@ -166,10 +176,7 @@ test('compose field hotkeys toggle optional recipients', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
 
-	await page.locator('#rl-left .buttonCompose').click();
-
-	const compose = page.locator('#V-PopupsCompose');
-	await expect(compose).toBeVisible();
+	const compose = await openCompose(page);
 	await expect(compose).toHaveClass(/animate/);
 
 	await expect(compose.locator('.bcc-row')).not.toBeVisible();
@@ -186,10 +193,7 @@ test('internal recipients auto-enable GnuPG sign and encrypt', async ({ page }) 
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
 
-	await page.locator('#rl-left .buttonCompose').click();
-
-	const compose = page.locator('#V-PopupsCompose');
-	await expect(compose).toBeVisible();
+	const compose = await openCompose(page);
 	await expect(compose).toHaveClass(/animate/);
 
 	await compose.locator('.emailaddresses input').first().fill(email);
@@ -209,6 +213,7 @@ test('internal recipients auto-enable GnuPG sign and encrypt', async ({ page }) 
 		timeout: 60000
 	}).toBe(true);
 
+	await expect(compose.locator('.organization-encryption-status')).toContainText('server GPG will sign and encrypt');
 	await expect(compose.locator('[data-i18n="[title]CRYPTO/SIGN"]')).toHaveClass(/btn-success/);
 	await expect(compose.locator('[data-i18n="[title]CRYPTO/ENCRYPT"]')).toHaveClass(/btn-success/);
 });
@@ -219,13 +224,10 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 	const subject = `GnuPG intra-company Playwright ${Date.now()}`,
 		body = `Encrypted intra-company Playwright body ${Date.now()}`,
 		senderContext = await browser.newContext({ viewport: { width: 1440, height: 900 } }),
-		sender = await senderContext.newPage();
+			sender = await senderContext.newPage();
 
 	await login(sender);
-	await sender.locator('#rl-left .buttonCompose').click();
-
-	const compose = sender.locator('#V-PopupsCompose');
-	await expect(compose).toBeVisible();
+	const compose = await openCompose(sender);
 
 	await compose.locator('.emailaddresses input').first().fill(secondaryEmail);
 	await sender.keyboard.press('Enter');
@@ -258,6 +260,7 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 	expect(paramsPreview.signFingerprint).toBeTruthy();
 	expect(paramsPreview.signPassphrase).toBe(true);
 	expect(paramsPreview.encryptFingerprints.length).toBe(2);
+	await expect(sender.locator('#V-PopupsAsk')).toBeHidden();
 
 	await compose.evaluate(element => ko.dataFor(element).sendCommand());
 	await sender.waitForFunction(() => {
@@ -268,13 +271,60 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 	});
 	await senderContext.close();
 
-	const recipientContext = await browser.newContext({ viewport: { width: 1440, height: 900 } }),
-		recipient = await recipientContext.newPage();
+	const recipientContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+	await recipientContext.addInitScript(() => {
+		const probe = window.__pgpDecryptProbe = {
+				openpgpDecryptCalls: 0,
+				gnupgDecryptCalls: 0
+			},
+			wrapOpenpgp = value => {
+				if (value?.decrypt && !value.__snappymailDecryptProbeWrapped) {
+					const originalDecrypt = value.decrypt;
+					value.decrypt = function(...args) {
+						probe.openpgpDecryptCalls += 1;
+						return originalDecrypt.apply(this, args);
+					};
+					Object.defineProperty(value, '__snappymailDecryptProbeWrapped', {
+						value: true
+					});
+				}
+				return value;
+			};
+		let openpgpValue = window.openpgp ? wrapOpenpgp(window.openpgp) : undefined;
+		Object.defineProperty(window, 'openpgp', {
+			configurable: true,
+			get() {
+				return openpgpValue;
+			},
+			set(value) {
+				openpgpValue = wrapOpenpgp(value);
+			}
+		});
+
+		const originalFetch = window.fetch;
+		window.fetch = function(resource, init = {}) {
+			try {
+				const body = init.body;
+				if ('string' === typeof body && 'GnupgDecrypt' === JSON.parse(body).Action) {
+					probe.gnupgDecryptCalls += 1;
+				} else if (body instanceof FormData && 'GnupgDecrypt' === body.get('Action')) {
+					probe.gnupgDecryptCalls += 1;
+				}
+			} catch (e) {
+				// Ignore non-JSON requests.
+			}
+			return originalFetch.apply(this, arguments);
+		};
+	});
+
+	const recipient = await recipientContext.newPage();
 	await login(recipient, secondaryEmail, secondaryPassword);
+	await expect(recipient.locator('#V-PopupsAsk')).toBeHidden();
 	await recipient.getByText(subject, { exact: true }).first().click({ force: true });
 	await recipient.waitForFunction(expected => document.body.innerText.includes(expected), body, {
 		timeout: 60000
 	});
+	await expect(recipient.locator('#V-PopupsAsk')).toBeHidden();
 
 	const received = await recipient.locator('#V-MailMessageView').evaluate(element => {
 		const message = ko.dataFor(element)?.message?.(),
@@ -282,7 +332,8 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 		return {
 			pgpDecrypted: message?.pgpDecrypted?.(),
 			hasBody: text.includes('Encrypted intra-company Playwright body'),
-			hasArmor: text.includes('BEGIN PGP MESSAGE')
+			hasArmor: text.includes('BEGIN PGP MESSAGE'),
+			decryptProbe: window.__pgpDecryptProbe
 		};
 	});
 
@@ -291,6 +342,8 @@ test('internal GnuPG message sends to secondary account and auto-decrypts', asyn
 		hasBody: true,
 		hasArmor: false
 	});
+	expect(received.decryptProbe.openpgpDecryptCalls).toBe(0);
+	expect(received.decryptProbe.gnupgDecryptCalls).toBeGreaterThan(0);
 	await recipientContext.close();
 });
 

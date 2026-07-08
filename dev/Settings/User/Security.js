@@ -57,27 +57,27 @@ export class UserSettingsSecurity extends AbstractViewSettings {
 		this.openpgpPublicCount = koComputable(() => this.openpgpkeysPublic().length);
 		this.gnupgPrivateCount = koComputable(() => this.gnupgPrivateKeys().length);
 		this.gnupgPublicCount = koComputable(() => this.gnupgPublicKeys().length);
-		this.encryptionReady = koComputable(() => !!(this.openpgpPrivateCount() || this.gnupgPrivateCount()));
+		this.encryptionReady = koComputable(() => !!this.gnupgPrivateCount());
 		this.encryptionEmail = koComputable(() => {
-			const key = this.openpgpkeysPrivate()[0] || this.gnupgPrivateKeys()[0];
+			const key = this.gnupgPrivateKeys()[0];
 			return key?.emails?.[0] || SettingsGet('Email') || '';
 		});
 		this.encryptionStatus = koComputable(() =>
 			this.encryptionReady()
 				? 'Ready'
-				: (this.canOpenPGP ? 'Setting up' : 'Unavailable')
+				: (this.canGnuPG ? 'Setting up' : 'Unavailable')
 		);
 		this.encryptionSummary = koComputable(() => {
-			const count = this.openpgpPrivateCount() || this.gnupgPrivateCount(),
+			const count = this.gnupgPrivateCount(),
 				email = this.encryptionEmail();
 			return this.encryptionReady()
-				? `${email}${email ? ' - ' : ''}${count} private key${1 === count ? '' : 's'}`
+				? `${email}${email ? ' - ' : ''}${count} server GPG private key${1 === count ? '' : 's'}`
 				: (email || this.encryptionStatus());
 		});
 		this.encryptionStatusClass = koComputable(() => ({
 			ready: this.encryptionReady(),
-			pending: !this.encryptionReady() && this.canOpenPGP,
-			unavailable: !this.encryptionReady() && !this.canOpenPGP
+			pending: !this.encryptionReady() && this.canGnuPG,
+			unavailable: !this.encryptionReady() && !this.canGnuPG
 		}));
 	}
 

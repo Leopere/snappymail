@@ -36,6 +36,8 @@ export const GnuPGUserStore = new class {
 		this.keyring;
 		this.publicKeys = ko.observableArray();
 		this.privateKeys = ko.observableArray();
+		this.bootstrapPromise = null;
+		this.loginPassphrases = new Map();
 	}
 
 	loadKeyrings() {
@@ -51,10 +53,19 @@ export const GnuPGUserStore = new class {
 					if (oData?.Result) {
 						this.keyring = oData.Result;
 						const initKey = (key, isPrivate) => {
-							const aEmails = [];
+							const
+								aEmails = [],
+								addEmail = value => {
+									const email = IDN.toASCII(value || '').match(/[^\s<>]+@[^\s<>]+/)?.[0]?.toLowerCase();
+									email && !aEmails.includes(email) && aEmails.push(email);
+								};
 							key.id = key.subkeys[0].keyid;
 							key.fingerprint = key.subkeys[0].fingerprint;
-							key.uids.forEach(uid => uid.email && aEmails.push(IDN.toASCII(uid.email).toLowerCase()));
+							key.uids.forEach(uid => {
+								addEmail(uid.email);
+								addEmail(uid.uid);
+								addEmail(uid.name);
+							});
 							key.emails = aEmails;
 							key.for = email => aEmails.includes(IDN.toASCII(email || '').toLowerCase());
 							key.askDelete = ko.observable(false);
@@ -81,6 +92,11 @@ export const GnuPGUserStore = new class {
 							};
 							if (isPrivate) {
 								key.password = async btnTxt => {
+									const rememberedPassphrase = this.passphraseForKey(key);
+									if (rememberedPassphrase) {
+										return rememberedPassphrase;
+									}
+
 									const pass = await Passphrases.ask(key,
 										'GnuPG key<br>' + key.id + ' ' + key.emails[0],
 										btnTxt
@@ -96,18 +112,18 @@ export const GnuPGUserStore = new class {
 									let pass = isPrivate ? await key.password('OPENPGP/POPUP_VIEW_TITLE') : '';
 									if (null != pass) try {
 										const result = await Remote.post('GnupgExportKey', null, {
-												keyId: key.id,
-												isPrivate: isPrivate,
-												passphrase: pass
-											});
+											keyId: key.id,
+											isPrivate: isPrivate,
+											passphrase: pass
+										});
 										if (result?.Result) {
 											key.armor = result.Result;
 											callback && callback();
 										} else {
-											Passphrases.delete(key);
+											this.forgetPassphraseForKey(key);
 										}
 									} catch (e) {
-										Passphrases.delete(key);
+										this.forgetPassphraseForKey(key);
 										alert(e.message);
 									}
 								}
@@ -160,9 +176,93 @@ export const GnuPGUserStore = new class {
 
 	rememberPassphraseFor(email, passphrase) {
 		email = IDN.toASCII((email || '').trim());
-		email && passphrase && this.privateKeys()
+		if (!email || !passphrase) {
+			return;
+		}
+
+		this.loginPassphrases.set('email:' + email.toLowerCase(), passphrase);
+		this.privateKeys()
 			.filter(key => key.for(email))
-			.forEach(key => Passphrases.handle(key, passphrase));
+			.forEach(key => this.rememberKeyPassphrase(key, passphrase));
+	}
+
+	rememberKeyPassphrase(key, passphrase) {
+		if (!key || !passphrase) {
+			return;
+		}
+
+		Passphrases.handle(key, passphrase);
+		key.fingerprint && this.loginPassphrases.set('fingerprint:' + key.fingerprint, passphrase);
+		key.id && this.loginPassphrases.set('keyid:' + key.id, passphrase);
+		(key.emails || []).forEach(email =>
+			this.loginPassphrases.set('email:' + IDN.toASCII(email || '').toLowerCase(), passphrase)
+		);
+	}
+
+	passphraseForKey(key) {
+		if (!key) {
+			return null;
+		}
+
+		const passphrase = Passphrases.handle(key)
+			|| (key.fingerprint && this.loginPassphrases.get('fingerprint:' + key.fingerprint))
+			|| (key.id && this.loginPassphrases.get('keyid:' + key.id))
+			|| (key.emails || []).reduce((result, email) =>
+				result || this.loginPassphrases.get('email:' + IDN.toASCII(email || '').toLowerCase())
+			, null);
+
+		passphrase && Passphrases.handle(key, passphrase);
+		return passphrase || null;
+	}
+
+	forgetPassphraseForKey(key) {
+		if (!key) {
+			return;
+		}
+
+		Passphrases.delete(key);
+		key.fingerprint && this.loginPassphrases.delete('fingerprint:' + key.fingerprint);
+		key.id && this.loginPassphrases.delete('keyid:' + key.id);
+		(key.emails || []).forEach(email =>
+			this.loginPassphrases.delete('email:' + IDN.toASCII(email || '').toLowerCase())
+		);
+	}
+
+	ensureKeyForLogin(email, passphrase) {
+		email = IDN.toASCII((email || '').trim());
+		if (!this.isSupported() || !email || !passphrase) {
+			return Promise.resolve(null);
+		}
+
+		this.rememberPassphraseFor(email, passphrase);
+
+		const key = this.getPrivateKeyFor(email, 1);
+		if (key) {
+			this.rememberKeyPassphrase(key, passphrase);
+			return Promise.resolve(key);
+		}
+
+		if (this.bootstrapPromise) {
+			return this.bootstrapPromise;
+		}
+
+		this.bootstrapPromise = Remote
+			.post('GnupgGenerateKey', null, { email, passphrase }, 120000)
+			.then(response => response?.Result
+				? this.loadKeyrings().then(() => {
+					const generatedKey = this.getPrivateKeyFor(email, 1);
+					generatedKey && this.rememberKeyPassphrase(generatedKey, passphrase);
+					return generatedKey;
+				})
+				: null
+			)
+			.catch(error => {
+				console.error('GnuPG first-login bootstrap failed', error);
+				return null;
+			})
+			.finally(() => this.bootstrapPromise = null);
+
+		return this.bootstrapPromise;
 	}
 
 	/**
@@ -197,7 +297,7 @@ export const GnuPGUserStore = new class {
 		const pgpInfo = message?.pgpEncrypted?.();
 		return !!pgpInfo && [message.to[0]?.email].concat(pgpInfo.keyIds || []).some(id => {
 			const key = id && findGnuPGKey(this.privateKeys, id);
-			return key && Passphrases.has(key);
+			return key && this.passphraseForKey(key);
 		});
 	}
 
@@ -231,7 +331,7 @@ export const GnuPGUserStore = new class {
 						}
 						throw response;
 					} catch (e) {
-						Passphrases.delete(key);
+						this.forgetPassphraseForKey(key);
 						throw e;
 					}
 				}

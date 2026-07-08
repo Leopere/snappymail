@@ -31,7 +31,7 @@ export const
 		init() {
 			const initKeyrings = () =>
 				this.loadKeyrings()
-					.then(() => this.bootstrapOpenPGPFromLogin());
+					.then(() => this.bootstrapGnuPGFromLogin());
 
 			if (SettingsCapa('OpenPGP') && window.crypto && crypto.getRandomValues) {
 				rl.loadScript(SettingsGet('StaticLibsJs').replace('/libs.', '/openpgp.'))
@@ -53,32 +53,14 @@ export const
 			return Promise.all([openPgpReady, gnuPgpReady]);
 		}
 
-		bootstrapOpenPGPFromLogin() {
+		bootstrapGnuPGFromLogin() {
 			const credentials = this.loginPassword;
 			this.loginPassword = null;
-			if (!credentials || !OpenPGPUserStore.isSupported()) {
+			if (!credentials || !GnuPGUserStore.isSupported()) {
 				return Promise.resolve();
 			}
 
-			return OpenPGPUserStore
-				.ensureKeyForLogin(credentials.email, credentials.password)
-				.then(keyPair => {
-					GnuPGUserStore.rememberPassphraseFor(credentials.email, credentials.password);
-					if (keyPair?.publicKey) {
-						const inGnuPG = GnuPGUserStore.isSupported() ? 3 : 0;
-						return GnuPGUserStore.storeKeyPair({
-							publicKey: keyPair.publicKey,
-							privateKey: keyPair.privateKey,
-							onServer: 3,
-							inGnuPG
-						})
-						.then(() => inGnuPG
-							? GnuPGUserStore.loadKeyrings()
-								.then(() => GnuPGUserStore.rememberPassphraseFor(credentials.email, credentials.password))
-							: null
-						);
-					}
-				});
+			return GnuPGUserStore.ensureKeyForLogin(credentials.email, credentials.password);
 		}
 
 		/**
@@ -133,19 +115,22 @@ export const
 				throw Error('Not armored text');
 			}
 
-			// Try OpenPGP.js
+			// Use the server-stored GnuPG keyring first. OpenPGP.js remains a manual fallback.
+			let result = await GnuPGUserStore.decrypt(message);
+			if (result) {
+				return result;
+			}
+
 			if (OpenPGPUserStore.isSupported()) {
 				const sender = message.from[0].email;
-				let result = await OpenPGPUserStore.decrypt(armoredText, sender);
+				result = await OpenPGPUserStore.decrypt(armoredText, sender);
 				if (result) {
 					return result;
 				}
 			}
 
 			// Try Mailvelope (does not support inline images)
-			return (await MailvelopeUserStore.decrypt(message))
-				// Or try GnuPG
-				|| GnuPGUserStore.decrypt(message);
+			return MailvelopeUserStore.decrypt(message);
 		}
 
 		async verify(message) {

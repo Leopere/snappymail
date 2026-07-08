@@ -360,6 +360,16 @@ export class ComposePopupView extends AbstractViewPopup {
 
 			encryptOptionsText: () => this.encryptOptions().join(', '),
 			signOptionsText: () => this.signOptions().map(o => o[0]).join(', '),
+			internalGnuPGNoticeText: () => {
+				const state = this.internalGnuPGState();
+				if (state.ready) {
+					return 'Organization recipients: server GPG will sign and encrypt this message automatically ' +
+						'unless this policy is explicitly disabled.';
+				}
+				return this.internalDomainRecipients().length
+					? 'Organization recipients need server GPG keys before this message can be sent.'
+					: '';
+			},
 
 			identitiesOptions: () =>
 				IdentityUserStore.map(item => ({
@@ -562,11 +572,18 @@ export class ComposePopupView extends AbstractViewPopup {
 										this.sendError(true);
 										sendFailed(iError, data);
 										// Remove remembered passphrase as it could be wrong
-										let key = ('S/MIME' === params.sign) ? this.currentIdentity() : null;
-										params.signFingerprint
-										&& this.signOptions.forEach(option => ('GnuPG' === option[0]) && (key = option[1]));
-										key && Passphrases.delete(key);
-									}
+											let key = ('S/MIME' === params.sign) ? this.currentIdentity() : null,
+												isGnuPGKey = false;
+											params.signFingerprint && this.signOptions.forEach(option => {
+												if ('GnuPG' === option[0]) {
+													key = option[1];
+													isGnuPGKey = true;
+												}
+											});
+											key && (isGnuPGKey
+												? GnuPGUserStore.forgetPassphraseForKey(key)
+												: Passphrases.delete(key));
+										}
 								} else {
 									if (arrayLength(this.aDraftInfo) > 0) {
 										const flag = {

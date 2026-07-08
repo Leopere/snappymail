@@ -451,6 +451,12 @@ dialog {
 	color: #A9222D;
 }
 
+#V-PopupsCompose .organization-encryption-status {
+	border-left-color: rgba(46, 125, 50, 0.62);
+	color: var(--brand-muted);
+	font-weight: 600;
+}
+
 #V-Settings-Security .encryption-summary {
 	align-items: center;
 	background: #F8FBFD;

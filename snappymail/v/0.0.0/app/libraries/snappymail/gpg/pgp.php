@@ -274,16 +274,23 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 	 */
 	public function generateKey(string $uid, SensitiveString $passphrase) /*: string|false*/
 	{
-		$settings = new PGPKeySettings;
-		$settings->name = $uid;
-		$settings->email = $uid;
-		$settings->passphrase = $passphrase;
+			$settings = new PGPKeySettings;
+			if (\preg_match('/^(.*?)<([^>]+)>$/', $uid, $matches)) {
+				$settings->name = \trim($matches[1]);
+				$settings->email = \trim($matches[2]);
+			} else if (\preg_match('/^[^\s<>]+@[^\s<>]+$/', $uid)) {
+				$settings->email = $uid;
+			} else {
+				$settings->name = $uid;
+			}
+			$settings->passphrase = $passphrase;
 
-		$arguments = [
-			'--batch',
-			'--yes',
-			'--passphrase', \escapeshellarg($settings->passphrase)
-		];
+			$arguments = [
+				'--batch',
+				'--yes',
+				'--passphrase', \escapeshellarg($settings->passphrase)
+			];
+			$passphrase = \strval($settings->passphrase);
 
 		/**
 		 * https://www.gnupg.org/documentation/manuals/gnupg/Unattended-GPG-key-generation.html
@@ -292,11 +299,12 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 		$this->_input = $settings->asUnattendedData();
 		$result = $this->exec(['--batch', '--yes', '--full-gen-key']);
 		 */
-		$result = $this->exec(\array_merge($arguments, [
-			'--quick-gen-key',
-			\escapeshellarg($settings->uid()),
-			$settings->algo(),
-			$settings->usage
+			$_ENV['PINENTRY_USER_DATA'] = \json_encode(['generate' => $passphrase]);
+			$result = $this->exec(\array_merge($arguments, [
+				'--quick-gen-key',
+				\escapeshellarg($settings->uid()),
+				$settings->algo(),
+				$settings->usage
 		]));
 		if (!$result) {
 			return false;
@@ -309,23 +317,24 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 				$fingerprint = $tokens[2];
 			}
 		}
-		if (!$fingerprint) {
-			return false;
-		}
+			if (!$fingerprint) {
+				return false;
+			}
 
-		$arguments[] = '--quick-add-key';
-		$arguments[] = $fingerprint;
+			$arguments[] = '--quick-add-key';
+			$arguments[] = $fingerprint;
 
 		foreach ($settings->subkeys as $i => $key) {
 			$algo = 'default';
 			if (!empty($key['curve'])) {
 				$algo = $key['curve'];
 			}
-			if (!empty($key['type'])) {
-				$algo = $key['type'] . ($key['length'] ?? '');
+				if (!empty($key['type'])) {
+					$algo = $key['type'] . ($key['length'] ?? '');
+				}
+				$_ENV['PINENTRY_USER_DATA'] = \json_encode([$fingerprint => $passphrase]);
+				$this->exec(\array_merge($arguments, [$algo, $key['usage'], '0']));
 			}
-			$this->exec(\array_merge($arguments, [$algo, $key['usage'], '0']));
-		}
 
 /*
 		[status][0] => KEY_NOT_CREATED

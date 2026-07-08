@@ -71,14 +71,17 @@ trait Pgp
 		if (80 < \strlen($homedir)) {
 			\clearstatcache();
 			// First try a symbolic link
-			$tmpdir = \sys_get_temp_dir() . '/snappymail';
+				$tmpdir = \sys_get_temp_dir() . '/snappymail';
 //			if (\RainLoop\Utils::inOpenBasedir($tmpdir) &&
-			\is_dir($tmpdir) || \mkdir($tmpdir, 0700);
-			if (\is_dir($tmpdir) && \is_writable($tmpdir)) {
-				$link = $tmpdir . '/' . \md5($homedir);
-				if (\is_link($link) || \symlink($homedir, $link)) {
-					$homedir = $link;
-				} else {
+				\is_dir($tmpdir) || \mkdir($tmpdir, 0700);
+				if (\is_dir($tmpdir) && \is_writable($tmpdir)) {
+					$link = $tmpdir . '/' . \md5($homedir);
+					if (\is_link($link) && !\file_exists($link)) {
+						\unlink($link);
+					}
+					if (\is_link($link) || \symlink($homedir, $link)) {
+						$homedir = $link;
+					} else {
 					$this->logWrite("symlink('{$homedir}', '{$link}') failed", \LOG_WARNING, 'GnuPG');
 				}
 			}
