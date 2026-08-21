@@ -21,6 +21,7 @@ assert.deepStrictEqual(manifest, {
 });
 for (const required of [
 	'docker buildx build',
+	'docker buildx version',
 	'--platform linux/amd64',
 	'--metadata-file "$metadata"',
 	'containerimage.digest',
@@ -35,6 +36,7 @@ for (const required of [
 }
 assert(!deploy.includes('${HOME'), 'The deploy-it snapshot clears HOME; deployment must resolve the OS account home directory.');
 assert(deploy.includes('pwd.getpwuid(os.getuid()).pw_dir'));
+assert(deploy.includes('DOCKER_CLI_PLUGIN_EXTRA_DIRS'));
 assert(deploy.indexOf('docker buildx imagetools inspect') < deploy.indexOf('./scripts/set-snappymail-release.py'));
 assert(deploy.indexOf('./scripts/set-snappymail-release.py') < deploy.indexOf('./scripts/verify.sh'));
 assert(deploy.indexOf('./scripts/verify.sh') < deploy.lastIndexOf('"$ship_it_bin"'));

@@ -34,13 +34,17 @@ controller_root="$operator_home/.local/share/boompay-vps-infra-l2-production-con
 controller_env="$controller_root/.env"
 gh_config_dir="$operator_home/.config/gh"
 ship_it_bin="${SHIP_IT_BIN:-$operator_home/.local/bin/ship-it}"
+buildx_plugins="$operator_home/.docker/cli-plugins"
 registry=ghcr.io/leopere/boompay-snappymail
 tag="$registry:git-$DEPLOY_IT_COMMIT"
 
 [ -d "$controller_root/.git" ] && [ ! -L "$controller_root" ] || fail 'tracked production controller is unavailable'
 [ -f "$controller_env" ] && [ ! -L "$controller_env" ] || fail 'production controller environment is unavailable'
 [ -d "$gh_config_dir" ] && [ ! -L "$gh_config_dir" ] || fail 'GitHub CLI configuration is unavailable'
+[ -d "$buildx_plugins" ] && [ ! -L "$buildx_plugins" ] || fail 'Docker CLI plugin directory is unavailable'
 [ -x "$ship_it_bin" ] || fail 'ship-it is unavailable'
+export DOCKER_CLI_PLUGIN_EXTRA_DIRS="$buildx_plugins"
+docker buildx version >/dev/null || fail 'Docker Buildx is unavailable'
 
 docker_config="$(mktemp -d)"
 metadata="$(mktemp)"
