@@ -78,12 +78,12 @@ trait Pgp
 
 	private function clientVaultRecord(\RainLoop\Model\Account $account) : ?array
 	{
-		$record = \json_decode((string) $this->StorageProvider()->Get(
-			$account,
-			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
-			'.openpgp-client-vault',
-			''
-		), true);
+		return $this->clientVaultRecordFromRaw($account->Email(), $this->clientVaultRaw($account));
+	}
+
+	private function clientVaultRecordFromRaw(string $email, string $raw) : ?array
+	{
+		$record = \json_decode($raw, true);
 		$keys = \is_array($record) ? \array_keys($record) : [];
 		\sort($keys);
 		$status = $record['status'] ?? 'active';
@@ -96,14 +96,102 @@ trait Pgp
 			&& \in_array($status, ['active', 'quarantined'], true)
 			&& $this->clientVault(\json_encode($record['vault']))
 			&& $this->clientVaultPublicKey($record['publicKey'] ?? '')
-			&& Wkd::publicKeyMatchesEmail($account->Email(), $record['publicKey'])
+			&& Wkd::publicKeyMatchesEmail($email, $record['publicKey'])
 			? $record + ['status' => $status] : null;
+	}
+
+	private function clientVaultStorageOwner(\RainLoop\Model\Account $account) : string
+	{
+		$parts = Wkd::emailParts($account->Email());
+		return $parts ? $parts[0] . '@' . $parts[1] : \strtolower($account->Email());
+	}
+
+	private function clientVaultRaw(\RainLoop\Model\Account $account) : string
+	{
+		return $this->clientVaultRawFromOwner($this->clientVaultStorageOwner($account));
+	}
+
+	private function clientVaultRawFromOwner($owner) : string
+	{
+		return (string) $this->StorageProvider()->Get(
+			$owner,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+			'.openpgp-client-vault',
+			''
+		);
+	}
+
+	private function clientVaultRawEmail(string $raw) : string
+	{
+		$record = \json_decode($raw, true);
+		$publicKey = \is_array($record) ? $this->clientVaultPublicKey($record['publicKey'] ?? '') : '';
+		$emails = $publicKey ? Wkd::publicKeyEmails($publicKey) : [];
+		return 1 === \count($emails) ? $emails[0] : '';
+	}
+
+	/** Move an opaque vault written under the pre-mailbox owner without changing its bytes. */
+	private function ensureClientVaultStorageOwner(\RainLoop\Model\Account $account) : bool
+	{
+		$storage = $this->StorageProvider();
+		$storageType = \RainLoop\Providers\Storage\Enumerations\StorageType::ROOT;
+		$canonicalOwner = $this->clientVaultStorageOwner($account);
+		$canonicalRaw = $this->clientVaultRawFromOwner($canonicalOwner);
+		if ($this->clientVaultRecordFromRaw($account->Email(), $canonicalRaw)) {
+			return true;
+		}
+
+		$additional = $account instanceof \RainLoop\Model\AdditionalAccount;
+		$sourceOwner = $canonicalOwner;
+		$sourceRaw = $canonicalRaw;
+		if ('' === \trim($sourceRaw)) {
+			$legacyRaw = $this->clientVaultRawFromOwner($account);
+			if ('' === \trim($legacyRaw)) {
+				return true;
+			}
+			$sourceOwner = $account;
+			$sourceRaw = $legacyRaw;
+		}
+
+		$recordEmail = $this->clientVaultRawEmail($sourceRaw);
+		$accountParts = Wkd::emailParts($account->Email());
+		$accountEmail = $accountParts ? $accountParts[0] . '@' . $accountParts[1] : '';
+		if (!$recordEmail) {
+			// An AdditionalAccount cannot safely attribute an unidentifiable parent record.
+			if ($additional || '' !== \trim($canonicalRaw)) {
+				return true;
+			}
+			// A mixed-case MainAccount legacy path still belongs to this exact account.
+			$recordEmail = $accountEmail;
+		}
+		if ($additional && $recordEmail !== $accountEmail) {
+			return true;
+		}
+
+		$targetOwner = $additional ? $canonicalOwner : $recordEmail;
+		$targetRaw = $this->clientVaultRawFromOwner($targetOwner);
+		if ('' !== \trim($targetRaw) && !\hash_equals($targetRaw, $sourceRaw)) {
+			return false;
+		}
+		if ('' === \trim($targetRaw) && (!$storage->Put(
+			$targetOwner, $storageType, '.openpgp-client-vault', $sourceRaw
+		) || !\hash_equals($sourceRaw, $this->clientVaultRawFromOwner($targetOwner)))) {
+			return false;
+		}
+		if (\is_string($sourceOwner) && $sourceOwner === $targetOwner) {
+			return true;
+		}
+		if (!$storage->Clear($sourceOwner, $storageType, '.openpgp-client-vault')) {
+			$this->logWrite('Copied a misplaced browser OpenPGP vault but could not remove its old owner path.', \LOG_ERR, 'OpenPGP');
+			return false;
+		}
+		$this->logWrite('Moved a misplaced browser OpenPGP vault to its mailbox storage owner.', \LOG_NOTICE, 'OpenPGP');
+		return true;
 	}
 
 	private function storeClientVaultRecord(\RainLoop\Model\Account $account, array $record) : bool
 	{
 		return $this->StorageProvider()->Put(
-			$account,
+			$this->clientVaultStorageOwner($account),
 			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
 			'.openpgp-client-vault',
 			\json_encode($record, JSON_UNESCAPED_SLASHES)
@@ -127,34 +215,16 @@ trait Pgp
 		$storage = $this->StorageProvider();
 		return '' === $previous
 			? $storage->Clear(
-				$account,
+				$this->clientVaultStorageOwner($account),
 				\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
 				'.openpgp-client-vault'
 			)
 			: $storage->Put(
-				$account,
+				$this->clientVaultStorageOwner($account),
 				\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
 				'.openpgp-client-vault',
 				$previous
 			);
-	}
-
-	private function discardLegacyPrivateKeyState(\RainLoop\Model\Account $account) : void
-	{
-		$this->StorageProvider()->Clear(
-			$account,
-			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
-			'.gnupg-passphrases'
-		);
-		$root = \rtrim($this->StorageProvider()->GenerateFilePath(
-			$account,
-			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT
-		), '/');
-		$homedir = $root . '/.gnupg';
-		if (\is_dir($homedir) && !\is_link($homedir)) {
-			\MailSo\Base\Utils::RecRmDir($homedir);
-		}
-		Backup::clearPrivateKeys();
 	}
 
 	/**
@@ -169,7 +239,11 @@ trait Pgp
 	private function clientVaultGetTransaction() : array
 	{
 		$account = $this->getAccountFromToken(false);
+		if ($account && !$this->ensureClientVaultStorageOwner($account)) {
+			return $this->FalseResponse();
+		}
 		$record = $account ? $this->clientVaultRecord($account) : null;
+		$invalid = $account && '' !== \trim($this->clientVaultRaw($account)) && !$record;
 		$quarantined = $record && 'quarantined' === $record['status'];
 		$published = $record && !$quarantined
 			&& $this->clientVaultPublicKeyPublished($account, $record['publicKey']);
@@ -180,6 +254,7 @@ trait Pgp
 		}
 		return $this->DefaultResponse([
 			'record' => $record,
+			'invalid' => !!$invalid,
 			'published' => !!$published,
 			'quarantined' => !!$quarantined
 		]);
@@ -198,6 +273,9 @@ trait Pgp
 	private function clientVaultQuarantineTransaction() : array
 	{
 		$account = $this->getAccountFromToken(false);
+		if ($account && !$this->ensureClientVaultStorageOwner($account)) {
+			return $this->FalseResponse();
+		}
 		$record = $account ? $this->clientVaultRecord($account) : null;
 		if (!$account || !$record) {
 			return $this->FalseResponse();
@@ -210,12 +288,7 @@ trait Pgp
 			return $this->DefaultResponse($record + ['published' => false, 'quarantined' => true]);
 		}
 
-		$previous = (string) $this->StorageProvider()->Get(
-			$account,
-			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
-			'.openpgp-client-vault',
-			''
-		);
+		$previous = $this->clientVaultRaw($account);
 		$record['revision']++;
 		$record['status'] = 'quarantined';
 		if (!$this->storeClientVaultRecord($account, $record)) {
@@ -244,6 +317,9 @@ trait Pgp
 	private function clientVaultRestoreTransaction() : array
 	{
 		$account = $this->getAccountFromToken(false);
+		if ($account && !$this->ensureClientVaultStorageOwner($account)) {
+			return $this->FalseResponse();
+		}
 		$record = $account ? $this->clientVaultRecord($account) : null;
 		if (!$account || !$record) {
 			return $this->FalseResponse();
@@ -281,6 +357,9 @@ trait Pgp
 	private function clientVaultPutTransaction() : array
 	{
 		$account = $this->getAccountFromToken(false);
+		if ($account && !$this->ensureClientVaultStorageOwner($account)) {
+			return $this->FalseResponse();
+		}
 		$vault = $this->clientVault($this->GetActionParam('vault', ''));
 		$publicKey = $this->clientVaultPublicKey($this->GetActionParam('publicKey', ''));
 		if (!$account || !$vault || !$publicKey) {
@@ -292,11 +371,16 @@ trait Pgp
 			return $this->FalseResponse();
 		}
 
-		$storage = $this->StorageProvider();
-		$storageType = \RainLoop\Providers\Storage\Enumerations\StorageType::ROOT;
-		$previous = (string) $storage->Get($account, $storageType, '.openpgp-client-vault', '');
+		$previous = $this->clientVaultRaw($account);
 		$current = $this->clientVaultRecord($account);
 		$currentRevision = (int) ($current['revision'] ?? 0);
+		if (!$current && '' !== \trim($previous)) {
+			return $this->DefaultResponse([
+				'conflict' => true,
+				'invalid' => true,
+				'revision' => 0
+			]);
+		}
 		if ($currentRevision !== (int) $this->GetActionParam('expectedRevision', 0)) {
 			return $this->DefaultResponse([
 				'conflict' => true,
@@ -325,10 +409,6 @@ trait Pgp
 				'OpenPGP'
 			);
 			return $this->FalseResponse();
-		}
-		if (0 === $currentRevision) {
-			// This deployment starts with newly generated browser-only identities.
-			$this->discardLegacyPrivateKeyState($account);
 		}
 		return $this->DefaultResponse($record + ['published' => true]);
 	}
@@ -394,6 +474,23 @@ trait Pgp
 		return false;
 	}
 
+	private function gnuPGPrivateKeysForEmail(array $keys, string $email) : array
+	{
+		return \array_values(\array_filter(
+			$keys,
+			fn($key) : bool => \is_array($key) && $this->gnuPGKeyHasEmail($key, $email)
+		));
+	}
+
+	private function legacyMigrationState(bool $legacyHome, bool $inspected, array $keys, array $passphrases) : array
+	{
+		$inspectionFailed = $legacyHome && !$inspected;
+		return [
+			'detected' => $inspectionFailed || !empty($keys) || !empty($passphrases),
+			'complete' => !$inspectionFailed
+		];
+	}
+
 	/**
 	 * Legacy-only input for exporting existing server keys. No current login or
 	 * browser request can write this historical passphrase data.
@@ -431,11 +528,91 @@ trait Pgp
 		return \array_values(\array_unique($candidates));
 	}
 
+	private function gnuPGPassphraseEntriesForEmail(string $email) : array
+	{
+		$parts = Wkd::emailParts($email);
+		$email = $parts ? $parts[0] . '@' . $parts[1] : '';
+		return $email ? \array_values(\array_filter(
+			$this->gnuPGPassphraseVault(),
+			static function ($entry) use ($email) : bool {
+				if (!\is_array($entry) || !\is_string($entry['email'] ?? null)) {
+					return false;
+				}
+				$parts = Wkd::emailParts($entry['email']);
+				return $parts && $email === $parts[0] . '@' . $parts[1];
+			}
+		)) : [];
+	}
+
+	/** Issue one short-lived export capability only in a fresh password-login response. */
+	private function issueLegacyMigrationCapability(\RainLoop\Model\Account $account) : string
+	{
+		return Wkd::transaction(fn() : string => $this->issueLegacyMigrationCapabilityTransaction($account));
+	}
+
+	private function issueLegacyMigrationCapabilityTransaction(\RainLoop\Model\Account $account) : string
+	{
+		if (!$this->ensureClientVaultStorageOwner($account)) {
+			return '';
+		}
+		if ('' !== \trim($this->clientVaultRaw($account))) {
+			return '';
+		}
+		$session = \RainLoop\Utils::GetSessionToken(false);
+		if (!$session) {
+			return '';
+		}
+		$capability = \rtrim(\strtr(\base64_encode(\random_bytes(32)), '+/', '-_'), '=');
+		$value = \json_encode([
+			'version' => 1,
+			'email' => $this->clientVaultStorageOwner($account),
+			'legacyMigration' => \hash('sha256', $capability),
+			'expires' => \time() + 180
+		], JSON_UNESCAPED_SLASHES);
+		return $value && $this->StorageProvider()->Put(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::SESSION,
+			$session,
+			$value
+		) ? $capability : '';
+	}
+
+	/** Consume the fresh-login capability before any legacy secret is exported. */
+	private function consumeLegacyMigrationCapability(\RainLoop\Model\Account $account, string $capability) : bool
+	{
+		$session = \RainLoop\Utils::GetSessionToken(false);
+		if (!$session || !\preg_match('/^[A-Za-z0-9_-]{43}$/D', $capability)) {
+			return false;
+		}
+		$value = $this->StorageProvider()->Get(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::SESSION,
+			$session,
+			''
+		);
+		$data = \is_string($value) ? \json_decode($value, true) : null;
+		$valid = \is_array($data)
+			&& 1 === ($data['version'] ?? 0)
+			&& \is_string($data['email'] ?? null)
+			&& \hash_equals($this->clientVaultStorageOwner($account), $data['email'])
+			&& \is_string($data['legacyMigration'] ?? null)
+			&& \is_int($data['expires'] ?? null)
+			&& \time() <= $data['expires']
+			&& \time() + 300 >= $data['expires']
+			&& \hash_equals($data['legacyMigration'], \hash('sha256', $capability));
+		return $valid && $this->StorageProvider()->Put(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::SESSION,
+			$session,
+			'true'
+		);
+	}
+
 	/**
 	 * Encrypts one legacy export to a one-time browser public key in a fresh
 	 * temporary keyring. The temporary keyring is always removed before return.
 	 */
-	private function legacyTransportEnvelope(string $publicKey, string $privateArmor) : string
+	private function legacyTransportEnvelope(string $publicKey, string $payload) : string
 	{
 		$temporaryHome = \rtrim(\sys_get_temp_dir(), '/') . '/sm-pgp-' . \bin2hex(\random_bytes(12));
 		$transport = null;
@@ -446,19 +623,18 @@ trait Pgp
 				return '';
 			}
 			$fingerprint = '';
-			foreach (($transport->allKeysInfo('')['public'] ?? []) as $key) {
-				$fingerprint = (string) ($key['subkeys'][0]['fingerprint'] ?? $key['subkeys'][0]['keyid'] ?? '');
-				if ($fingerprint) {
-					break;
-				}
+			$keys = $transport->allKeysInfo('')['public'] ?? [];
+			if (1 !== \count($keys)) {
+				return '';
 			}
+			$fingerprint = (string) ($keys[0]['subkeys'][0]['fingerprint'] ?? $keys[0]['subkeys'][0]['keyid'] ?? '');
 			if (!$fingerprint) {
 				return '';
 			}
 			$transport->setArmor(true);
 			$transport->clearEncryptKeys();
 			$transport->addEncryptKey($fingerprint);
-			$envelope = $transport->encrypt($privateArmor);
+			$envelope = $transport->encrypt($payload);
 			return \is_string($envelope) && \str_contains($envelope, '-----BEGIN PGP MESSAGE-----')
 				? $envelope : '';
 		} catch (\Throwable $e) {
@@ -483,9 +659,22 @@ trait Pgp
 	 */
 	public function DoPgpLegacyProtectedKeyExport() : array
 	{
+		return Wkd::transaction(fn() : array => $this->pgpLegacyProtectedKeyExportTransaction());
+	}
+
+	private function pgpLegacyProtectedKeyExportTransaction() : array
+	{
 		$account = $this->getAccountFromToken(false);
+		if ($account && !$this->ensureClientVaultStorageOwner($account)) {
+			return $this->FalseResponse();
+		}
 		$transportPublicKey = $this->clientVaultPublicKey($this->GetActionParam('transportPublicKey', ''));
-		if (!$account || !$transportPublicKey) {
+		$capability = (string) $this->GetActionParam('migrationToken', '');
+		if (!$account || $this->clientVaultRecord($account) || !$transportPublicKey
+			|| !Wkd::publicKeyUsableForEmail($account->Email(), $transportPublicKey)) {
+			return $this->FalseResponse();
+		}
+		if (!$this->consumeLegacyMigrationCapability($account, $capability)) {
 			return $this->FalseResponse();
 		}
 		$root = $account ? \rtrim($this->StorageProvider()->GenerateFilePath(
@@ -499,13 +688,16 @@ trait Pgp
 			$GPG = null;
 		}
 		$keys = [];
-		$detected = $legacyHome && !$GPG;
-		$complete = !$detected;
+		$privateKeys = $this->gnuPGPrivateKeysForEmail(
+			$GPG ? ($GPG->allKeysInfo('')['private'] ?? []) : [],
+			$account->Email()
+		);
+		$matchingPassphraseState = $this->gnuPGPassphraseEntriesForEmail($account->Email());
+		$state = $this->legacyMigrationState($legacyHome, (bool) $GPG, $privateKeys, $matchingPassphraseState);
+		$detected = $state['detected'];
+		$complete = $state['complete'];
 		if ($account && $GPG) {
-			foreach (($GPG->allKeysInfo('')['private'] ?? []) as $key) {
-				if (!$this->gnuPGKeyHasEmail($key, $account->Email())) {
-					continue;
-				}
+			foreach ($privateKeys as $key) {
 				$detected = true;
 				$fingerprint = (string) ($key['subkeys'][0]['fingerprint'] ?? $key['subkeys'][0]['keyid'] ?? '');
 				if (!$fingerprint) {
@@ -513,49 +705,79 @@ trait Pgp
 					continue;
 				}
 				$armored = '';
-				foreach (\array_merge($this->gnuPGPassphraseCandidates($account->Email()), ['']) as $passphrase) try {
+				$usedPassphrase = null;
+				foreach (\array_merge([''], $this->gnuPGPassphraseCandidates($account->Email())) as $passphrase) try {
 					$armored = $GPG->export($fingerprint, new \SnappyMail\SensitiveString($passphrase));
 					if ($armored && \str_contains($armored, 'BEGIN PGP PRIVATE KEY')) {
+						$usedPassphrase = $passphrase;
 						break;
 					}
 				} catch (\Throwable $e) {
 					// Try the next legacy passphrase candidate without logging secret-key material.
 				}
-				$envelope = $armored
-					? $this->legacyTransportEnvelope($transportPublicKey, $armored) : '';
+				unset($passphrase);
+				try {
+					$publicKey = $armored ? (string) $GPG->export($fingerprint) : '';
+				} catch (\Throwable $e) {
+					$publicKey = '';
+				}
+				$parts = Wkd::emailParts($account->Email());
+				$email = $parts ? $parts[0] . '@' . $parts[1] : '';
+				$entry = null !== $usedPassphrase && $publicKey && $email
+					&& \in_array($email, Wkd::publicKeyEmails($publicKey), true)
+					? \json_encode([
+						'version' => 1,
+						'email' => $account->Email(),
+						'fingerprint' => \strtoupper($fingerprint),
+						'privateKey' => $armored,
+						'passphrase' => $usedPassphrase
+					], JSON_UNESCAPED_SLASHES) : '';
+				$envelope = $entry ? $this->legacyTransportEnvelope($transportPublicKey, $entry) : '';
 				if ($envelope) {
-					$keys[] = $envelope;
+					$keys[\strtoupper($fingerprint)] = [
+						'envelope' => $envelope,
+						'publicKey' => $publicKey,
+						'published' => Wkd::matches($account->Email(), $publicKey),
+						'usable' => Wkd::publicKeyUsableForEmail($account->Email(), $publicKey)
+					];
 				} else {
 					$complete = false;
 				}
+				$armored = $entry = $usedPassphrase = null;
 			}
 		}
+		if ($detected && !$keys) {
+			$complete = false;
+		}
+		$published = \array_filter($keys, static fn(array $key) : bool => $key['published'] && $key['usable']);
+		$usable = \array_filter($keys, static fn(array $key) : bool => $key['usable']);
+		$activeFingerprint = '';
+		if (1 === \count($published)) {
+			$activeFingerprint = (string) \array_key_first($published);
+		} else if (!$published && 1 === \count($usable)) {
+			$activeFingerprint = (string) \array_key_first($usable);
+		} else if ($detected) {
+			$complete = false;
+		}
+		$publicKey = $activeFingerprint ? $keys[$activeFingerprint]['publicKey'] : '';
 		return $this->DefaultResponse([
-			'keys' => $keys,
+			'keys' => \array_values(\array_column($keys, 'envelope')),
 			'detected' => $detected,
-			'complete' => $complete
+			'complete' => $complete,
+			'activeFingerprint' => $complete ? $activeFingerprint : '',
+			'publicKey' => $complete ? $publicKey : ''
 		]);
 	}
 
 	/**
-	 * Removes only legacy private-key state after the user has verified the
-	 * browser vault. Mail, account settings, public WKD output, and tunnels are
-	 * intentionally outside this operation.
+	 * Legacy cleanup remains disabled until the server can verify browser key
+	 * possession and old-message decryptability. Migration never deletes keys.
 	 */
 	public function DoPgpLegacyPrivateKeyPurge() : array
 	{
-		$account = $this->getAccountFromToken(false);
-		if (!$account || 'PURGE_LEGACY_PRIVATE_KEYS' !== $this->GetActionParam('confirm', '')) {
-			return $this->FalseResponse();
-		}
-		$record = $this->clientVaultRecord($account);
-		if (!$record || !$this->clientVaultPublicKeyPublished($account, $record['publicKey'])) {
-			return $this->FalseResponse();
-		}
-
-		$this->discardLegacyPrivateKeyState($account);
-		$this->logWrite('Legacy server OpenPGP private key state removed for ' . $account->Email(), \LOG_NOTICE, 'OpenPGP');
-		return $this->TrueResponse();
+		// Migration is deliberately non-destructive. A future purge must prove
+		// browser possession and old-message decryptability before it can exist.
+		return $this->FalseResponse();
 	}
 
 	public function DoGetPGPKeys() : array

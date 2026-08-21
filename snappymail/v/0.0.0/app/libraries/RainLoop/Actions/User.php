@@ -62,7 +62,12 @@ trait User
 			}
 		}
 
-		return $this->DefaultResponse($this->AppData(false));
+		$data = $this->AppData(false);
+		$legacyMigrationCapability = $this->issueLegacyMigrationCapability($oAccount);
+		if ($legacyMigrationCapability) {
+			$data['OpenPgpLegacyMigrationCapability'] = $legacyMigrationCapability;
+		}
+		return $this->DefaultResponse($data);
 	}
 
 	public function DoLogout() : array

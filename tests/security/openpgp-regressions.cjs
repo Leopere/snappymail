@@ -65,6 +65,7 @@ assert(
 );
 
 const pgpStore = read('dev/Stores/User/Pgp.js');
+const legacyMigration = read('dev/Storage/OpenPgpLegacyMigration.js');
 const appUser = read('dev/App/User.js');
 assert(
 	pgpStore.includes('this.readyPromise = Promise.resolve(false)')
@@ -131,7 +132,8 @@ assert(
 	wkd.includes("openpgpkey/.vault-transaction.lock")
 		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultPutTransaction())')
 		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultQuarantineTransaction())')
-		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultRestoreTransaction())'),
+		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultRestoreTransaction())')
+		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->pgpLegacyProtectedKeyExportTransaction())'),
 	'Vault storage, quarantine, restore, and WKD publication must share one transaction boundary.'
 );
 assert(
@@ -159,14 +161,31 @@ assert(
 assert(
 		openPgpStore.includes("obsoletePrivateKeysItem = 'openpgp-private-keys'")
 			&& openPgpStore.includes('storage.removeItem(obsoletePrivateKeysItem)')
-			&& openPgpStore.includes('autoStartVault(loginPassword, record)')
+			&& openPgpStore.includes('autoStartVault(loginPassword, record, legacyMigrationCapability)')
 			&& openPgpStore.includes('createVault(loginPassword)')
 			&& pgpStore.includes("const password = email ? this.loginPassword : ''")
 			&& !openPgpStore.includes("Remote.request('GetPGPKeys'")
 			&& openPgpStore.includes("Remote.post('PgpClientVaultGet'")
-			&& !openPgpStore.includes("PgpLegacyProtectedKeyExport'")
+			&& openPgpStore.includes("Remote.post('PgpLegacyProtectedKeyExport'")
+			&& openPgpStore.indexOf('await this.migrateLegacyVault(loginPassword, legacyMigrationCapability)')
+				< openPgpStore.indexOf('await this.createVault(loginPassword)')
+			&& openPgpStore.includes("migrationToken: migrationCapability")
+			&& openPgpStore.includes('true === result.invalid')
+			&& pgpActions.includes('issueLegacyMigrationCapability(')
+			&& pgpActions.includes('consumeLegacyMigrationCapability(')
+			&& pgpActions.includes("'invalid' => true")
+			&& pgpActions.includes('clientVaultStorageOwner($account)')
+			&& pgpActions.includes('ensureClientVaultStorageOwner($account)')
+			&& pgpActions.includes('Moved a misplaced browser OpenPGP vault to its mailbox storage owner.')
+			&& pgpActions.includes('gnuPGPrivateKeysForEmail(')
+			&& pgpActions.includes('legacyMigrationState(')
+			&& legacyMigration.includes('openpgp.decrypt({')
+			&& legacyMigration.includes('openpgp.decryptKey({ privateKey, passphrase: entry.passphrase })')
+			&& legacyMigration.includes('openpgp.encryptKey({ privateKey, passphrase: newPassphrase })')
+			&& !pgpActions.includes('discardLegacyPrivateKeyState')
+			&& /DoPgpLegacyPrivateKeyPurge\(\)[\s\S]{0,300}FalseResponse/.test(pgpActions)
 			&& !openPgpStore.includes('AskPopupView'),
-		'Clean-start deployment must discard legacy browser keys and create an opaque browser vault without a migration prompt.'
+		'First login must migrate a recoverable legacy key before creating a new identity, and migration must never purge legacy state.'
 );
 assert(
 	clientVault.includes('VERSION = 2')
@@ -313,7 +332,7 @@ const wkdLibrary = read('snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php
 const wkdSync = read('scripts/sync-wkd-static-sites.cjs');
 const messageActionsContract = read('snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Messages.php');
 assert(
-	pgpActions.includes("Wkd::publicKeyMatchesEmail($account->Email(), $record['publicKey'])")
+	pgpActions.includes("Wkd::publicKeyMatchesEmail($email, $record['publicKey'])")
 		&& wkdLibrary.includes('public static function publicKeyMatchesEmail')
 		&& wkdLibrary.includes('publicKeyMatchesObject($domain, $hash, $key)')
 		&& !wkdSync.includes('storage_root=')
@@ -540,9 +559,12 @@ assert(
 	'Auto logout must default to 30 minutes, allow one explicit warned disabled state, and cap enabled sessions at one day.'
 );
 assert(
-		loginView.includes('PgpUserStore.setLoginPassword(email, loginPassword)')
-			&& pgpStore.includes('setLoginPassword(email, password)')
+		loginView.includes('PgpUserStore.setLoginPassword(email, loginPassword, migrationCapability)')
+			&& loginView.includes('delete oData.Result.OpenPgpLegacyMigrationCapability')
+			&& pgpStore.includes("setLoginPassword(email, password, migrationCapability = '')")
 			&& pgpStore.includes('takeLoginPassword(email)')
+			&& pgpStore.includes('takeLegacyMigrationCapability(email)')
+			&& userActions.includes("data['OpenPgpLegacyMigrationCapability']")
 			&& openPgpStore.includes('OpenPgpClientVault.create(this.vaultEmail, payload, loginPassword)')
 			&& openPgpStore.includes('OpenPgpClientVault.changePassword(')
 			&& !userAuth.includes('saveGnuPGPassphrase($oAccount->Email()')

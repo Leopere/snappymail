@@ -15,11 +15,13 @@ export const
 		this.initialized = false;
 		this.loginEmail = '';
 		this.loginPassword = '';
+		this.legacyMigrationCapability = '';
 	}
 
-		setLoginPassword(email, password) {
+		setLoginPassword(email, password, migrationCapability = '') {
 			this.loginEmail = IDN.toASCII((email || '').trim()).toLowerCase();
 			this.loginPassword = password || '';
+			this.legacyMigrationCapability = migrationCapability || '';
 		}
 
 	takeLoginPassword(email) {
@@ -27,9 +29,18 @@ export const
 		// Login plugins may canonicalize an alias after authentication. The password
 		// belongs to this just-authenticated browser transition, not to the typed alias.
 		const password = email ? this.loginPassword : '';
-		this.loginEmail = '';
 		this.loginPassword = '';
 		return password;
+	}
+
+	takeLegacyMigrationCapability(email) {
+		email = IDN.toASCII((email || '').trim()).toLowerCase();
+		// Login plugins may canonicalize an alias after authentication. The server
+		// capability is already bound to this session and its authenticated account.
+		const capability = email ? this.legacyMigrationCapability : '';
+		this.loginEmail = '';
+		this.legacyMigrationCapability = '';
+		return capability;
 	}
 
 	init() {
@@ -40,8 +51,9 @@ export const
 		const email = SettingsGet('Email'),
 			loadLibrary = SettingsCapa('OpenPGP') && window.crypto && crypto.getRandomValues,
 			openPgpLibrary = SettingsGet('StaticLibsJs').replace('/libs.', '/openpgp.');
-		let loginPassword = this.takeLoginPassword(email);
-		const loadKeyrings = () => this.loadKeyrings(email, loginPassword),
+		let loginPassword = this.takeLoginPassword(email),
+			legacyMigrationCapability = this.takeLegacyMigrationCapability(email);
+		const loadKeyrings = () => this.loadKeyrings(email, loginPassword, legacyMigrationCapability),
 			wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
 			loadClientLibrary = async () => {
 				if (!loadLibrary) {
@@ -70,7 +82,10 @@ export const
 			};
 		this.readyPromise = loadClientLibrary()
 			.then(bootstrapVault)
-			.finally(() => loginPassword = '');
+			.finally(() => {
+				loginPassword = '';
+				legacyMigrationCapability = '';
+			});
 		return this.readyPromise;
 	}
 
@@ -80,14 +95,15 @@ export const
 			.catch(() => false);
 	}
 
-		loadKeyrings(identifier, loginPassword = '') {
+		loadKeyrings(identifier, loginPassword = '', legacyMigrationCapability = '') {
 			MailvelopeUserStore.loadKeyring(identifier);
-			return OpenPGPUserStore.loadKeyrings(identifier, loginPassword);
+			return OpenPGPUserStore.loadKeyrings(identifier, loginPassword, legacyMigrationCapability);
 		}
 
 		forgetSessionSecrets() {
-			this.loginEmail = '';
-			this.loginPassword = '';
+		this.loginEmail = '';
+		this.loginPassword = '';
+		this.legacyMigrationCapability = '';
 			OpenPGPUserStore.lock();
 		}
 

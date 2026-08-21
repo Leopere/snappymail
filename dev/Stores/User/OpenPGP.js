@@ -11,6 +11,7 @@ import { OpenPgpKeyPopupView } from 'View/Popup/OpenPgpKey';
 
 import { Passphrases } from 'Storage/Passphrases';
 import { OpenPgpClientVault } from 'Storage/OpenPgpVault';
+import { createLegacyTransport, migrateLegacyExport } from 'Storage/OpenPgpLegacyMigration';
 
 import { baseCollator } from 'Common/Translator';
 
@@ -175,7 +176,7 @@ export const OpenPGPUserStore = new class {
 		this.publicKeyDiscoveryPromises = new Map();
 	}
 
-	loadKeyrings(email = '', loginPassword = '') {
+	loadKeyrings(email = '', loginPassword = '', legacyMigrationCapability = '') {
 		if (!loaded() || !OpenPgpClientVault.isSupported()) {
 			this.vaultState('unavailable');
 			return Promise.resolve(false);
@@ -196,7 +197,7 @@ export const OpenPGPUserStore = new class {
 		let startup;
 		this.vaultStartupPromise = startup = this.publicKeyLoadPromise
 			.then(() => this.loadVaultRecordWithRetry())
-			.then(record => this.autoStartVault(loginPassword, record))
+			.then(record => this.autoStartVault(loginPassword, record, legacyMigrationCapability))
 			.finally(() => {
 				if (this.vaultStartupPromise === startup) {
 					this.vaultStartupPromise = null;
@@ -223,6 +224,11 @@ export const OpenPGPUserStore = new class {
 		const
 			result = response?.Result || {},
 			record = result.record || null;
+		if (true === result.invalid) {
+			this.vaultState('error');
+			this.vaultError('The existing encrypted key vault is invalid and was preserved for recovery.');
+			throw Error(this.vaultError());
+		}
 		if (!record) {
 			this.vaultState('missing');
 			return null;
@@ -489,12 +495,52 @@ export const OpenPGPUserStore = new class {
 		return this.loadVaultPayload(payload, created.vaultKey, keyPair.publicKey);
 	}
 
-	async autoStartVault(loginPassword = '', record = this.vaultRecord()) {
+	async migrateLegacyVault(loginPassword, migrationCapability) {
+		if (!migrationCapability) {
+			throw Error('Sign out and sign in again to authorize legacy key migration');
+		}
+		const transport = await createLegacyTransport(this.vaultEmail);
+		let response;
+		try {
+			response = await Remote.post('PgpLegacyProtectedKeyExport', null, {
+				transportPublicKey: transport.publicKey,
+				migrationToken: migrationCapability
+			}, 30000);
+			const migration = await migrateLegacyExport(
+				this.vaultEmail, response?.Result, transport.privateKey
+			);
+			if (!migration) {
+				return null;
+			}
+			const created = await OpenPgpClientVault.create(
+				this.vaultEmail, migration.payload, loginPassword
+			);
+			await this.persistVault(created.vault, migration.publicKey);
+			await OpenPgpClientVault.rememberOnDevice(this.vaultEmail, created.vaultKey).catch(() => false);
+			return this.loadVaultPayload(migration.payload, created.vaultKey, migration.publicKey);
+		} finally {
+			transport.privateKey = '';
+			transport.publicKey = '';
+			response = null;
+		}
+	}
+
+	async autoStartVault(loginPassword = '', record = this.vaultRecord(), legacyMigrationCapability = '') {
 		if (!record) {
 			if ('missing' !== this.vaultState()) {
 				throw Error(this.vaultError() || 'Unable to load the encrypted key vault');
 			}
-			return loginPassword ? this.createVault(loginPassword) : null;
+			if (!loginPassword) {
+				return null;
+			}
+			try {
+				return await this.migrateLegacyVault(loginPassword, legacyMigrationCapability)
+					|| await this.createVault(loginPassword);
+			} catch (error) {
+				this.vaultState('error');
+				this.vaultError(error?.message || 'Unable to migrate the existing OpenPGP key');
+				throw error;
+			}
 		}
 		if (false === record.published && !record.quarantined) {
 			throw Error('The OpenPGP public key could not be published to WKD.');

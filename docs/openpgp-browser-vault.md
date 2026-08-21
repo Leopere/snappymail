@@ -2,18 +2,37 @@
 
 ## Scope
 
-This is a clean-start deployment. Existing browser private-key storage and
-server GnuPG private-key state are deliberately discarded. The first successful
-mail login creates a fresh browser-only OpenPGP identity for that mailbox and
-publishes its public key through WKD. Old encrypted mail is outside this
-deployment's recovery contract.
+This deployment preserves existing OpenPGP identities. When a mailbox doesn't
+have a browser vault, its next successful login first checks for a legacy
+server GnuPG key. If that key can be recovered, the browser migrates and
+re-protects it without changing its fingerprint. If no legacy key exists, the
+browser creates a new identity and publishes it through WKD.
+
+An incomplete or ambiguous legacy key blocks new-key creation. This fail-closed
+behavior prevents SnappyMail from silently replacing an identity or making old
+encrypted mail unreadable. Existing version-2 browser vaults continue to use
+their current keys and format.
 
 ## Security boundary
 
-OpenPGP private keys are generated, decrypted, used, and cleared in the
+New OpenPGP private keys are generated, decrypted, used, and cleared in the
 browser. The application server stores only an opaque encrypted vault record,
-the associated public key, and a revision number. It never receives private-key
-armor, an OpenPGP key passphrase, a decrypted vault key, or a device key.
+the associated public key, and a revision number. It never receives a browser
+vault key, browser device key, or private-key armor created by the browser.
+
+During one-time legacy migration, the server exports the private key and
+historical key passphrase that it already holds. It encrypts both to a new,
+one-time browser transport key before returning them. The browser proves that
+the passphrase unlocks the key, then immediately re-protects the same key with
+a new random passphrase inside the encrypted vault. The HTTP response and logs
+never contain raw private-key armor or a raw key passphrase.
+
+An ordinary authenticated session can't request this export. A successful
+password login issues a random, three-minute migration capability only when no
+vault record exists. The server stores only its hash, binds it to that session
+and normalized mailbox, and accepts it once. Switching to an additional account
+can't reuse the capability. The browser removes it from the login response
+before it initializes the rest of the application.
 
 The mailbox password necessarily reaches the server for IMAP/SMTP login. After
 that login succeeds, the browser retains it only long enough to create or
@@ -25,7 +44,7 @@ This is browser-side cryptography, not protection from a hostile server capable
 of serving altered JavaScript. That stronger threat model requires an
 independently verified client such as a signed extension or native application.
 
-## Vault Format
+## Vault format
 
 Version 2 has two independent access paths to the same random 256-bit vault
 key:
@@ -47,12 +66,41 @@ that contains private-key armor outside the opaque ciphertext.
 
 ## Lifecycle
 
-On the first successful login, the browser silently generates a Curve25519
-OpenPGP identity, creates the encrypted vault, saves the opaque record, stores
-its local device wrapper, and publishes the public key to WKD. Saving succeeds
-only after the server confirms that the exact public key is present at the
-mailbox's hashed WKD object; a failed publication restores the prior record.
-There is no vault setup, recovery-secret, migration, or key passphrase prompt.
+On the first successful login without a vault, the browser requests an export
+encrypted to an ephemeral transport key. A confirmed `detected: false` result
+continues to fresh Curve25519 key generation. A complete legacy export instead
+keeps the existing fingerprint, imports every recoverable historical key, and
+uses the current WKD-matching key as the active identity. If no WKD key matches,
+SnappyMail selects the legacy key only when exactly one usable mailbox key
+exists. Any partial or ambiguous result stops without writing a vault or WKD
+object. Expired or revoked historical keys remain in the vault for old-message
+decryption, but can't become the active WKD identity.
+
+After fresh creation or migration, the browser creates the encrypted vault,
+saves the opaque record, and stores its local device wrapper. Saving succeeds
+only after the server confirms that the exact active public key is present at
+the mailbox's hashed WKD object. A failed publication restores the prior
+record. This flow doesn't ask for a vault setup, migration, recovery secret, or
+key passphrase.
+
+An invalid, truncated, unsupported, or mailbox-mismatched existing vault is not
+treated as missing. SnappyMail preserves its original bytes, blocks a
+revision-zero replacement, and reports that recovery is required. Vault files
+are stored under the active mailbox address so an additional account can't
+read or overwrite its parent account's vault.
+
+Older releases could write an additional account's vault under its parent
+account, and could preserve a mixed-case mailbox path. Before bootstrap,
+SnappyMail copies that opaque version-2 record to the mailbox named by its
+public key, verifies that every byte matches, and only then removes the old
+path. It does not decrypt, rewrap, or rotate the OpenPGP key during this storage
+repair. A conflicting destination or an unidentifiable main-account record
+stops without overwriting either copy.
+
+Legacy detection is mailbox-scoped after SnappyMail successfully inspects the
+old keyring and passphrase records. An empty keyring, or a parent keyring that
+contains keys only for another account, does not block fresh identity creation.
+An unreadable keyring or an incomplete matching key remains fail-closed.
 
 On later visits from the same browser, the IndexedDB device wrapper unlocks the
 vault without an extra interaction. On a new browser, the successful login
@@ -71,15 +119,17 @@ Logout and automatic logout clear decrypted private keys, the raw vault key,
 and private-key passphrases from browser memory. The local device wrapper stays
 encrypted at rest so the next authenticated visit can be hands-free.
 
-## Clean-Start Cleanup
+## Legacy key retention
 
 The browser removes the old unprotected `openpgp-private-keys` local-storage
-entry on bootstrap. When it writes a mailbox's first version-2 vault, the
-server removes that mailbox's legacy GnuPG directory, historical GnuPG
-passphrase file, and legacy private-key backup state. Mail, non-PGP account
-settings, WKD routing, and tunnels are not modified by this cleanup.
+entry on bootstrap. Writing the first version-2 vault doesn't delete the
+mailbox's legacy GnuPG directory, passphrase file, or historical key material.
+The legacy purge endpoint remains disabled until a future flow can prove both
+browser possession and old-message decryptability. This retention makes the
+migration recoverable and doesn't modify mail, non-PGP account settings, WKD
+routing, or tunnels.
 
-## Send And Receive Contract
+## Send and receive contract
 
 The browser fetches a fresh public WKD key for every To/Cc/Bcc recipient through
 bounded discovery. When every recipient and the sender vault are usable, it

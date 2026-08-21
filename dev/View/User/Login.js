@@ -111,6 +111,11 @@ export class LoginUserView extends AbstractViewLogin {
 			data.set('signMe', this.signMe() ? 1 : 0);
 			Remote.request('Login',
 				(iError, oData) => {
+					const migrationCapability = iError ? ''
+						: (oData.Result?.OpenPgpLegacyMigrationCapability || '');
+					if (!iError) {
+						delete oData.Result.OpenPgpLegacyMigrationCapability;
+					}
 					fireEvent('sm-user-login-response', {
 						error: iError,
 						data: oData
@@ -124,7 +129,7 @@ export class LoginUserView extends AbstractViewLogin {
 							Notifications.UnknownError));
 						this.submitErrorAdditional(oData?.messageAdditional || oData?.message);
 					} else {
-						PgpUserStore.setLoginPassword(email, loginPassword);
+						PgpUserStore.setLoginPassword(email, loginPassword, migrationCapability);
 						this.password('');
 						rl.setData(oData.Result);
 					}

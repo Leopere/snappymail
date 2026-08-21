@@ -2,6 +2,6 @@
 
 console.error(
 	'Server-side GnuPG provisioning is retired for this browser-vault deployment. '
-	+ 'It would violate the browser-only private-key boundary. Use npm run openpgp:cutover:plan instead.'
+	+ 'It would violate the browser-only private-key boundary. Use the automatic browser-vault migration instead.'
 );
 process.exitCode = 2;
