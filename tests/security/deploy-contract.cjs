@@ -49,4 +49,9 @@ assert(dockerfile.includes('ARG SOURCE_REVISION'));
 assert(dockerfile.includes('LABEL org.opencontainers.image.revision="$SOURCE_REVISION"'));
 assert(dockerfile.includes('chown www-data:www-data /snappymail'));
 assert(dockerfile.includes('chmod 550 /snappymail'));
+assert(
+	dockerfile.indexOf('chown www-data:www-data /snappymail') >
+		dockerfile.indexOf('COPY --chown=root:root .docker/release/files /'),
+	'The application root must be secured after the final root-owned overlay copy.'
+);
 console.log('Direct production deployment contract checks passed');

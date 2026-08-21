@@ -172,8 +172,6 @@ RUN set -eux; \
 COPY --chown=www-data:www-data --from=builder /snappymail /snappymail
 # Use a custom snappymail data folder
 RUN set -eux; \
-    chown www-data:www-data /snappymail; \
-    chmod 550 /snappymail; \
     mv -v /snappymail/data /var/lib/snappymail;
 # Setup configs
 COPY --chown=root:root .docker/release/files /
@@ -181,6 +179,8 @@ COPY --chown=root:root .docker/release/files /
 # it into the persistent SnappyMail plugin directory without exposing secrets.
 COPY --chown=root:root plugins/rocksign /opt/snappymail-plugins/rocksign
 RUN set -eux; \
+    chown www-data:www-data /snappymail; \
+    chmod 550 /snappymail; \
     chown www-data:www-data /snappymail/include.php; \
     chmod 440 /snappymail/include.php; \
     chmod +x /entrypoint.sh; \
