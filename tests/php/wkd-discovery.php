@@ -130,6 +130,10 @@ namespace {
 		'A WKD public key must expose the exact requested mailbox in a User ID packet.');
 	$assert(!\SnappyMail\PGP\Wkd::publicKeyMatchesEmail('security@binding.example.test', $colinKey),
 		'A different mailbox User ID must not be accepted at the requested WKD object.');
+	$assert(!\SnappyMail\PGP\Wkd::publicKeyMatchesEmail(
+		'security@binding.example.test',
+		$securityKey . $packet(13, 'Colin <colin@binding.example.test>')
+	), 'A mailbox WKD object must not contain an additional identity.');
 	$assert([] === \SnappyMail\PGP\Wkd::publicKeyEmails($packet(5, 'secret') . $packet(13, 'security@binding.example.test')),
 		'A secret-key packet must never be accepted as a WKD public key.');
 	$bindingHash = \SnappyMail\PGP\Wkd::hash('security');
@@ -187,6 +191,37 @@ namespace {
 		'Publication must fail when the hashed manifest entry cannot be committed.');
 	$assert(!\is_file(\SnappyMail\PGP\Wkd::publicKeyPath($failedDomain, \SnappyMail\PGP\Wkd::hash('security'))),
 		'A failed manifest commit must roll back a newly created WKD key object.');
+
+	$withdrawDomain = 'withdraw.example.test';
+	$withdrawEmail = 'security@' . $withdrawDomain;
+	$retainedEmail = 'operations@' . $withdrawDomain;
+	$withdrawKey = $publicPacket . $packet(13, "Security <{$withdrawEmail}>");
+	$retainedKey = $publicPacket . $packet(13, "Operations <{$retainedEmail}>");
+	$assert(\SnappyMail\PGP\Wkd::publish($withdrawEmail, $withdrawKey)
+		&& \SnappyMail\PGP\Wkd::publish($retainedEmail, $retainedKey),
+		'The WKD withdrawal fixture must publish both mailbox keys.');
+	$assert(\SnappyMail\PGP\Wkd::unpublish($withdrawEmail),
+		'Quarantining a vault must withdraw its WKD publication.');
+	$assert(!\SnappyMail\PGP\Wkd::matches($withdrawEmail, $withdrawKey)
+		&& \SnappyMail\PGP\Wkd::matches($retainedEmail, $retainedKey),
+		'Withdrawing one mailbox must preserve every other WKD object and manifest entry.');
+	$assert(\SnappyMail\PGP\Wkd::unpublish($withdrawEmail),
+		'Repeated WKD withdrawal must be idempotent.');
+
+	$rollbackDomain = 'withdraw-rollback.example.test';
+	$rollbackEmail = 'security@' . $rollbackDomain;
+	$rollbackKey = $publicPacket . $packet(13, "Security <{$rollbackEmail}>");
+	$assert(\SnappyMail\PGP\Wkd::publish($rollbackEmail, $rollbackKey),
+		'The WKD withdrawal rollback fixture must publish.');
+	$rollbackManifest = \SnappyMail\PGP\Wkd::manifestPath($rollbackDomain);
+	\unlink($rollbackManifest);
+	\mkdir($rollbackManifest, 0700);
+	$assert(!\SnappyMail\PGP\Wkd::unpublish($rollbackEmail),
+		'WKD withdrawal must fail when its manifest change cannot commit.');
+	$assert(\is_file(\SnappyMail\PGP\Wkd::publicKeyPath(
+		$rollbackDomain,
+		\SnappyMail\PGP\Wkd::hash('security')
+	)), 'A failed WKD withdrawal must restore the previous key object.');
 
 	$concurrentDomain = 'concurrent.example.test';
 	\is_dir(APP_PRIVATE_DATA) || \mkdir(APP_PRIVATE_DATA, 0700, true);

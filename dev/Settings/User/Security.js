@@ -33,11 +33,13 @@ export class UserSettingsSecurity extends AbstractViewSettings {
 		this.addSetting('AutoLogoutDisabled');
 
 		this.vaultState = OpenPGPUserStore.vaultState;
+		this.vaultError = OpenPGPUserStore.vaultError;
 		this.encryptionEmail = koComputable(() => SettingsGet('Email') || '');
 		this.encryptionStatus = koComputable(() => ({
 			ready: 'Unlocked',
 			locked: 'Locked',
-			missing: 'Pending',
+			missing: 'Setup required',
+			quarantined: 'Recovery required',
 			error: 'Unavailable',
 			unavailable: 'Unavailable'
 		}[this.vaultState()] || 'Unavailable'));
@@ -46,12 +48,15 @@ export class UserSettingsSecurity extends AbstractViewSettings {
 			if ('ready' === state || 'locked' === state) {
 				return `${email}${email ? ' - ' : ''}browser-encrypted private key vault`;
 			}
+			if ('quarantined' === state) {
+				return this.vaultError() || `${email} public key withdrawn`;
+			}
 			return email || this.encryptionStatus();
 		});
 		this.encryptionStatusClass = koComputable(() => ({
 			ready: 'ready' === this.vaultState(),
 			pending: ['locked', 'missing'].includes(this.vaultState()),
-			unavailable: ['error', 'unavailable'].includes(this.vaultState())
+			unavailable: ['error', 'quarantined', 'unavailable'].includes(this.vaultState())
 		}));
 	}
 }

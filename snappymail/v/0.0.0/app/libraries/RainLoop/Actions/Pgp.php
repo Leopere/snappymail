@@ -84,21 +84,38 @@ trait Pgp
 			'.openpgp-client-vault',
 			''
 		), true);
+		$keys = \is_array($record) ? \array_keys($record) : [];
+		\sort($keys);
+		$status = $record['status'] ?? 'active';
+		$validKeys = ['publicKey', 'revision', 'vault', 'version'] === $keys
+			|| ['publicKey', 'revision', 'status', 'vault', 'version'] === $keys;
 		return \is_array($record)
-			&& $this->clientVaultKeys($record, ['version', 'revision', 'vault', 'publicKey'])
+			&& $validKeys
 			&& 2 === ($record['version'] ?? 0)
 			&& 0 < ($record['revision'] ?? 0)
+			&& \in_array($status, ['active', 'quarantined'], true)
 			&& $this->clientVault(\json_encode($record['vault']))
 			&& $this->clientVaultPublicKey($record['publicKey'] ?? '')
 			&& Wkd::publicKeyMatchesEmail($account->Email(), $record['publicKey'])
-			? $record : null;
+			? $record + ['status' => $status] : null;
+	}
+
+	private function storeClientVaultRecord(\RainLoop\Model\Account $account, array $record) : bool
+	{
+		return $this->StorageProvider()->Put(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+			'.openpgp-client-vault',
+			\json_encode($record, JSON_UNESCAPED_SLASHES)
+		);
 	}
 
 	private function clientVaultPublicKeyPublished(\RainLoop\Model\Account $account, string $publicKey) : bool
 	{
 		try {
-			return Wkd::matches($account->Email(), $publicKey)
-				|| Wkd::publish($account->Email(), $publicKey);
+			return Wkd::publicKeyUsableForEmail($account->Email(), $publicKey)
+				&& (Wkd::matches($account->Email(), $publicKey)
+					|| Wkd::publish($account->Email(), $publicKey));
 		} catch (\Throwable $e) {
 			$this->logWrite('Browser OpenPGP WKD publication failed: ' . $e->getMessage(), \LOG_WARNING, 'OpenPGP');
 			return false;
@@ -146,25 +163,132 @@ trait Pgp
 	 */
 	public function DoPgpClientVaultGet() : array
 	{
+		return Wkd::transaction(fn() : array => $this->clientVaultGetTransaction());
+	}
+
+	private function clientVaultGetTransaction() : array
+	{
 		$account = $this->getAccountFromToken(false);
 		$record = $account ? $this->clientVaultRecord($account) : null;
-		$published = $record && $this->clientVaultPublicKeyPublished($account, $record['publicKey']);
-		if ($record && !$published) {
+		$quarantined = $record && 'quarantined' === $record['status'];
+		$published = $record && !$quarantined
+			&& $this->clientVaultPublicKeyPublished($account, $record['publicKey']);
+		if ($quarantined && !Wkd::unpublish($account->Email())) {
+			$this->logWrite('Quarantined browser OpenPGP key could not be withdrawn from WKD.', \LOG_ERR, 'OpenPGP');
+		} else if ($record && !$published && !$quarantined) {
 			$this->logWrite('Browser OpenPGP vault exists but its WKD public key is unavailable.', \LOG_WARNING, 'OpenPGP');
 		}
 		return $this->DefaultResponse([
 			'record' => $record,
-			'published' => !!$published
+			'published' => !!$published,
+			'quarantined' => !!$quarantined
 		]);
 	}
 
+	/**
+	 * A browser calls this only after a real login password and the saved device
+	 * wrapper both fail to unlock the private key. The encrypted vault remains
+	 * recoverable, but its public key is withdrawn immediately.
+	 */
+	public function DoPgpClientVaultQuarantine() : array
+	{
+		return Wkd::transaction(fn() : array => $this->clientVaultQuarantineTransaction());
+	}
+
+	private function clientVaultQuarantineTransaction() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		$record = $account ? $this->clientVaultRecord($account) : null;
+		if (!$account || !$record) {
+			return $this->FalseResponse();
+		}
+		if ((int) $record['revision'] !== (int) $this->GetActionParam('expectedRevision', 0)) {
+			return $this->DefaultResponse(['conflict' => true, 'revision' => (int) $record['revision']]);
+		}
+		if ('quarantined' === $record['status']) {
+			Wkd::unpublish($account->Email());
+			return $this->DefaultResponse($record + ['published' => false, 'quarantined' => true]);
+		}
+
+		$previous = (string) $this->StorageProvider()->Get(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+			'.openpgp-client-vault',
+			''
+		);
+		$record['revision']++;
+		$record['status'] = 'quarantined';
+		if (!$this->storeClientVaultRecord($account, $record)) {
+			return $this->FalseResponse();
+		}
+		if (!Wkd::unpublish($account->Email())) {
+			$restored = $this->restoreClientVaultRecord($account, $previous);
+			$this->logWrite(
+				'Browser OpenPGP quarantine failed'
+					. ($restored ? '; active vault state restored.' : '; active vault restoration failed.'),
+				$restored ? \LOG_WARNING : \LOG_ERR,
+				'OpenPGP'
+			);
+			return $this->FalseResponse();
+		}
+		$this->logWrite('Browser OpenPGP vault quarantined and its WKD key withdrawn.', \LOG_WARNING, 'OpenPGP');
+		return $this->DefaultResponse($record + ['published' => false, 'quarantined' => true]);
+	}
+
+	/** Republish only after the browser has successfully unlocked the private key. */
+	public function DoPgpClientVaultRestore() : array
+	{
+		return Wkd::transaction(fn() : array => $this->clientVaultRestoreTransaction());
+	}
+
+	private function clientVaultRestoreTransaction() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		$record = $account ? $this->clientVaultRecord($account) : null;
+		if (!$account || !$record) {
+			return $this->FalseResponse();
+		}
+		if ((int) $record['revision'] !== (int) $this->GetActionParam('expectedRevision', 0)) {
+			return $this->DefaultResponse(['conflict' => true, 'revision' => (int) $record['revision']]);
+		}
+		if ('active' === $record['status']) {
+			$published = $this->clientVaultPublicKeyPublished($account, $record['publicKey']);
+			return $this->DefaultResponse($record + ['published' => $published, 'quarantined' => false]);
+		}
+		if (!$this->clientVaultPublicKeyPublished($account, $record['publicKey'])) {
+			return $this->FalseResponse();
+		}
+		$record['revision']++;
+		$record['status'] = 'active';
+		if (!$this->storeClientVaultRecord($account, $record)) {
+			$withdrawn = Wkd::unpublish($account->Email());
+			$this->logWrite(
+				'Browser OpenPGP restore could not persist active state'
+					. ($withdrawn ? '; WKD publication withdrawn.' : '; WKD withdrawal failed.'),
+				$withdrawn ? \LOG_WARNING : \LOG_ERR,
+				'OpenPGP'
+			);
+			return $this->FalseResponse();
+		}
+		return $this->DefaultResponse($record + ['published' => true, 'quarantined' => false]);
+	}
+
 	public function DoPgpClientVaultPut() : array
+	{
+		return Wkd::transaction(fn() : array => $this->clientVaultPutTransaction());
+	}
+
+	private function clientVaultPutTransaction() : array
 	{
 		$account = $this->getAccountFromToken(false);
 		$vault = $this->clientVault($this->GetActionParam('vault', ''));
 		$publicKey = $this->clientVaultPublicKey($this->GetActionParam('publicKey', ''));
 		if (!$account || !$vault || !$publicKey) {
 			$this->logWrite('Rejected malformed browser OpenPGP vault write.', \LOG_WARNING, 'OpenPGP');
+			return $this->FalseResponse();
+		}
+		if (!Wkd::publicKeyUsableForEmail($account->Email(), $publicKey)) {
+			$this->logWrite('Rejected browser OpenPGP key without one exact mailbox UID and usable signing/encryption capabilities.', \LOG_WARNING, 'OpenPGP');
 			return $this->FalseResponse();
 		}
 
@@ -183,15 +307,11 @@ trait Pgp
 		$record = [
 			'version' => 2,
 			'revision' => $currentRevision + 1,
+			'status' => 'active',
 			'vault' => $vault,
 			'publicKey' => $publicKey
 		];
-		$stored = $storage->Put(
-			$account,
-			$storageType,
-			'.openpgp-client-vault',
-			\json_encode($record, JSON_UNESCAPED_SLASHES)
-		);
+		$stored = $this->storeClientVaultRecord($account, $record);
 		if (!$stored) {
 			$this->logWrite('Unable to persist browser OpenPGP vault.', \LOG_WARNING, 'OpenPGP');
 			return $this->FalseResponse();

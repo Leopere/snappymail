@@ -33,6 +33,16 @@ const
 			return false;
 		}
 	},
+	validateMailboxPublicKey = async (armoredKey, email) => {
+		const key = await openpgp.readKey({ armoredKey }),
+			emails = [...new Set(key.users.map(user => normalizeEmail(user.userID?.email)).filter(Boolean))];
+		if (key.isPrivate() || 1 !== key.users.length || 1 !== emails.length || normalizeEmail(email) !== emails[0]
+			|| !await keyCanEncrypt(key)) {
+			throw Error('The OpenPGP public key does not match this mailbox or cannot encrypt');
+		}
+		await key.getSigningKey();
+		return key;
+	},
 	keyEncryptionId = async key => (await key.getEncryptionKey()).getKeyID().toHex().toUpperCase(),
 	publicKeysItem = 'openpgp-public-keys',
 	obsoletePrivateKeysItem = 'openpgp-private-keys',
@@ -220,8 +230,14 @@ export const OpenPGPUserStore = new class {
 		OpenPgpClientVault.validate(record.vault);
 		await this.importPublicKeys([record.publicKey], false);
 		record.published = true === result.published;
+		record.quarantined = true === result.quarantined || 'quarantined' === record.status;
 		this.vaultRecord(record);
-		if (!record.published) {
+		if (record.quarantined) {
+			this.vaultState('quarantined');
+			this.vaultError('This encryption vault is in recovery mode. '
+				+ 'Its public WKD key stays withdrawn until you recover the private key.');
+		}
+		else if (!record.published) {
 			this.vaultState('error');
 			this.vaultError('The OpenPGP public key could not be published to WKD.');
 		}
@@ -355,7 +371,7 @@ export const OpenPGPUserStore = new class {
 		return this.importPublicKeys([armoredKey]);
 	}
 
-	async loadVaultPayload(payload, vaultKey) {
+	async loadVaultPayload(payload, vaultKey, publicKey) {
 		if (!payload || 1 !== payload.version || !Array.isArray(payload.privateKeys)) {
 			throw Error('Invalid encrypted key vault payload');
 		}
@@ -375,6 +391,14 @@ export const OpenPGPUserStore = new class {
 		if (!privateKeys.length) {
 			throw Error('Encrypted key vault is empty');
 		}
+		const publishedKey = await validateMailboxPublicKey(publicKey, this.vaultEmail),
+			activeFingerprint = (payload.activeFingerprint || '').toUpperCase(),
+			activeKey = privateKeys.find(key => key.fingerprint === activeFingerprint);
+		if (!activeKey || !activeKey.for(this.vaultEmail)
+			|| activeKey.fingerprint !== publishedKey.getFingerprint().toUpperCase()
+			|| !await keyCanEncrypt(activeKey.key)) {
+			throw Error('The encrypted private key does not match the published mailbox key');
+		}
 		this.vaultKey = vaultKey;
 		this.vaultPayload = payload;
 		this.privateKeys(dedup(privateKeys));
@@ -383,7 +407,39 @@ export const OpenPGPUserStore = new class {
 		return privateKeys;
 	}
 
+	async quarantineVault(record) {
+		const response = await Remote.post('PgpClientVaultQuarantine', null, {
+				expectedRevision: record.revision
+			}, 15000),
+			quarantined = response?.Result;
+		if (quarantined?.conflict) {
+			throw Error('The encrypted key vault changed in another session. Reload before trying again.');
+		}
+		if (!quarantined || true !== quarantined.quarantined || false !== quarantined.published) {
+			throw Error('The inaccessible OpenPGP public key could not be withdrawn from WKD');
+		}
+		this.vaultRecord(quarantined);
+		this.vaultState('quarantined');
+		return quarantined;
+	}
+
+	async restoreVault(record) {
+		const response = await Remote.post('PgpClientVaultRestore', null, {
+				expectedRevision: record.revision
+			}, 15000),
+			restored = response?.Result;
+		if (restored?.conflict) {
+			throw Error('The encrypted key vault changed in another session. Reload before trying again.');
+		}
+		if (!restored || true !== restored.published || true === restored.quarantined) {
+			throw Error('The recovered OpenPGP public key could not be restored to WKD');
+		}
+		this.vaultRecord(restored);
+		return restored;
+	}
+
 	async persistVault(vault, publicKey) {
+		await validateMailboxPublicKey(publicKey, this.vaultEmail);
 		const expectedRevision = this.vaultRecord()?.revision || 0,
 			response = await Remote.post('PgpClientVaultPut', null, {
 				vault: JSON.stringify(vault),
@@ -430,7 +486,7 @@ export const OpenPGPUserStore = new class {
 			created = await OpenPgpClientVault.create(this.vaultEmail, payload, loginPassword);
 		await this.persistVault(created.vault, keyPair.publicKey);
 		await OpenPgpClientVault.rememberOnDevice(this.vaultEmail, created.vaultKey).catch(() => false);
-		return this.loadVaultPayload(payload, created.vaultKey);
+		return this.loadVaultPayload(payload, created.vaultKey, keyPair.publicKey);
 	}
 
 	async autoStartVault(loginPassword = '', record = this.vaultRecord()) {
@@ -440,7 +496,7 @@ export const OpenPGPUserStore = new class {
 			}
 			return loginPassword ? this.createVault(loginPassword) : null;
 		}
-		if (false === record.published) {
+		if (false === record.published && !record.quarantined) {
 			throw Error('The OpenPGP public key could not be published to WKD.');
 		}
 
@@ -453,20 +509,44 @@ export const OpenPGPUserStore = new class {
 		if (!unlocked) try {
 			unlocked = await OpenPgpClientVault.unlockWithDevice(this.vaultEmail, record.vault);
 		} catch (error) {
-			this.vaultState('locked');
+			if (loginPassword && !record.quarantined) {
+				try {
+					record = await this.quarantineVault(record);
+				} catch (quarantineError) {
+					this.vaultState('error');
+					this.vaultError(quarantineError?.message || 'The inaccessible OpenPGP key could not be withdrawn');
+					return null;
+				}
+			}
+			this.vaultState(record.quarantined ? 'quarantined' : 'locked');
 			this.vaultError(loginPassword
-				? 'This browser vault could not be unlocked with the current login password.'
+				? 'This vault did not unlock with the current password. '
+					+ 'Its public WKD key was withdrawn to stop new unreadable mail.'
 				: 'Sign in again to unlock the browser encryption vault.');
 			return null;
 		}
 
-		const privateKeys = await this.loadVaultPayload(unlocked.payload, unlocked.vaultKey);
+		let privateKeys;
+		try {
+			privateKeys = await this.loadVaultPayload(unlocked.payload, unlocked.vaultKey, record.publicKey);
+		} catch (error) {
+			if (!record.quarantined) {
+				record = await this.quarantineVault(record);
+			}
+			this.lock();
+			this.vaultState('quarantined');
+			this.vaultError('The private key did not match its public WKD key. Publication was withdrawn.');
+			return null;
+		}
 		await OpenPgpClientVault.rememberOnDevice(this.vaultEmail, unlocked.vaultKey).catch(() => false);
 		if (loginPassword && 'password' !== unlocked.unlockedWith) {
 			const vault = await OpenPgpClientVault.changePassword(
 				this.vaultEmail, record.vault, this.vaultKey, loginPassword
 			);
 			await this.persistVault(vault, record.publicKey);
+		}
+		else if (record.quarantined) {
+			await this.restoreVault(record);
 		}
 		return privateKeys;
 	}
@@ -496,7 +576,7 @@ export const OpenPGPUserStore = new class {
 				})
 				.catch(error => {
 					this.vaultError(error?.message || 'Unable to unlock encryption vault');
-					'error' !== this.vaultState()
+					!['error', 'quarantined'].includes(this.vaultState())
 						&& this.vaultState(this.vaultRecord() ? 'locked' : 'missing');
 					throw error;
 				})

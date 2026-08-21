@@ -22,13 +22,16 @@ try {
 		entries: [{ email_hash: emailHash, wkd_hash: hash }]
 	}));
 
-	const inspect = () => [{ emails: [email], canEncrypt: true }];
+	const inspect = () => [{ emails: [email], uidCount: 1, canEncrypt: true, canSign: true }];
 	assert.equal(validateDomainSource(root, domain, inspect).length, 1);
-	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [`colin@${domain}`], canEncrypt: true }]), /identity/);
-	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [email], canEncrypt: false }]), /capability/);
+	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [`colin@${domain}`], uidCount: 1, canEncrypt: true, canSign: true }]), /identity/);
+	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [email, `colin@${domain}`], uidCount: 2, canEncrypt: true, canSign: true }]), /identity/);
+	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [email], uidCount: 2, canEncrypt: true, canSign: true }]), /identity/);
+	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [email], uidCount: 1, canEncrypt: false, canSign: true }]), /capability/);
+	assert.throws(() => validateDomainSource(root, domain, () => [{ emails: [email], uidCount: 1, canEncrypt: true, canSign: false }]), /capability/);
 	assert.throws(() => validateDomainSource(root, domain, () => [
-		{ emails: [email], canEncrypt: false },
-		{ emails: [`colin@${domain}`], canEncrypt: true }
+		{ emails: [email], uidCount: 1, canEncrypt: false, canSign: true },
+		{ emails: [`colin@${domain}`], uidCount: 1, canEncrypt: true, canSign: true }
 	]), /mismatch/);
 	const symlink = path.join(root, 'hu', wkdHash('symlink'));
 	fs.symlinkSync(path.join(root, 'hu', hash), symlink);

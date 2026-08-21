@@ -211,13 +211,14 @@ const browserBundles = [
 	'static/js/min/app.min.js',
 	'static/js/min/openpgp.min.js'
 ];
+const packageVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'))).version;
 const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
 const fetchBundleHash = async (account, bundle) => {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 20000);
 	try {
 		const host = new URL(account.baseURL).host;
-		const url = new URL('/snappymail/v/0.0.0/' + bundle, account.baseURL).toString();
+		const url = new URL(`/snappymail/v/${packageVersion}/${bundle}`, account.baseURL).toString();
 		const response = await fetch(url, { signal: controller.signal });
 		if (!response.ok) {
 			throw Error(`Published ${bundle} request returned HTTP ${response.status}`);

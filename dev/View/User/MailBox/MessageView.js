@@ -304,7 +304,7 @@ export class MailMessageView extends AbstractViewRight {
 					return encrypted.error;
 				}
 				const vaultState = OpenPGPUserStore.vaultState();
-				if (!message.pgpDecrypted() && ('locked' === vaultState || 'error' === vaultState)) {
+				if (!message.pgpDecrypted() && ['locked', 'quarantined', 'error'].includes(vaultState)) {
 					return OpenPGPUserStore.vaultError() || 'Preparing browser encryption vault';
 				}
 				return message.pgpDecrypted()

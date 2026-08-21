@@ -25,7 +25,9 @@ RUN set -eux; \
 # Inspired by the original Rainloop dockerfile from youtous on GitLab
 FROM php:8.2-fpm-alpine3.24@sha256:41ddda74d95c43518c3e4414e6c1c99f9c062d397f0c7a2d8cadf8d1f035d196 AS final
 
+ARG SOURCE_REVISION
 LABEL org.label-schema.description="SnappyMail webmail client image using nginx, php-fpm on Alpine"
+LABEL org.opencontainers.image.revision="$SOURCE_REVISION"
 
 # Refresh the pinned Alpine runtime and enforce the patched c-ares floor.
 RUN set -eux; \

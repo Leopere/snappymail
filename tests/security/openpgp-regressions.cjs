@@ -38,6 +38,8 @@ assert(
 assert(
 	pgpActions.includes('DoPgpClientVaultGet()')
 		&& pgpActions.includes('DoPgpClientVaultPut()')
+		&& pgpActions.includes('DoPgpClientVaultQuarantine()')
+		&& pgpActions.includes('DoPgpClientVaultRestore()')
 		&& pgpActions.includes("'.openpgp-client-vault'")
 		&& pgpActions.includes("'BEGIN PGP PRIVATE KEY'"),
 	'Private key material must be rejected by the opaque server vault endpoint.'
@@ -108,6 +110,30 @@ assert(
 const openPgpStore = read('dev/Stores/User/OpenPGP.js');
 const clientVault = read('dev/Storage/OpenPgpVault.js');
 const wkd = read('snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php');
+assert(
+	pgpActions.includes("$record['status'] = 'quarantined'")
+		&& pgpActions.includes('Wkd::unpublish($account->Email())')
+		&& pgpActions.includes("'status' => 'active'")
+		&& openPgpStore.includes("Remote.post('PgpClientVaultQuarantine'")
+		&& openPgpStore.includes("Remote.post('PgpClientVaultRestore'")
+		&& openPgpStore.includes('The private key did not match its public WKD key')
+		&& openPgpStore.includes('Its public WKD key was withdrawn')
+		&& wkd.includes('public static function unpublish(string $email) : bool'),
+	'An unlock or private/public binding failure must withdraw WKD while preserving a recoverable encrypted vault.'
+);
+assert(
+	pgpActions.includes('Wkd::publicKeyUsableForEmail($account->Email(), $publicKey)')
+		&& wkd.includes('1 === $certificates && 1 === $uids && $canEncrypt && $canSign')
+		&& openPgpStore.includes('1 !== key.users.length'),
+	'Vault publication must independently require one exact mailbox UID plus usable signing and encryption capabilities.'
+);
+assert(
+	wkd.includes("openpgpkey/.vault-transaction.lock")
+		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultPutTransaction())')
+		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultQuarantineTransaction())')
+		&& pgpActions.includes('Wkd::transaction(fn() : array => $this->clientVaultRestoreTransaction())'),
+	'Vault storage, quarantine, restore, and WKD publication must share one transaction boundary.'
+);
 assert(
 	pgpActions.includes('clientVaultPublicKeyPublished(')
 		&& pgpActions.includes('restoreClientVaultRecord(')

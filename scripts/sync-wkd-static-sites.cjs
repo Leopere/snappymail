@@ -39,15 +39,22 @@ const inspectPublicKey = file => {
 	for (const line of output.split('\n')) {
 		const fields = line.split(':');
 		if ('pub' === fields[0]) {
-			certificate = { emails: [], canEncrypt: (fields[11] || '').toLowerCase().includes('e') };
+			certificate = {
+				emails: [],
+				uidCount: 0,
+				canEncrypt: (fields[11] || '').toLowerCase().includes('e'),
+				canSign: (fields[11] || '').toLowerCase().includes('s')
+			};
 			certificates.push(certificate);
 			continue;
 		}
 		if ('sub' === fields[0] && certificate) {
 			certificate.canEncrypt ||= (fields[11] || '').toLowerCase().includes('e');
+			certificate.canSign ||= (fields[11] || '').toLowerCase().includes('s');
 			continue;
 		}
 		if ('uid' !== fields[0] || !certificate) continue;
+		certificate.uidCount++;
 		const uid = (fields[9] || '').replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 		for (const match of uid.matchAll(/[^\s<>]+@[^\s<>]+/g)) certificate.emails.push(match[0].toLowerCase());
 	}
@@ -75,7 +82,8 @@ const validateDomainSource = (sourceRoot, domain, inspector = inspectPublicKey) 
 		const object = fs.lstatSync(file);
 		if (!object.isFile() || object.isSymbolicLink()) throw Error(`Unsafe WKD key object for ${domain}`);
 		const certificates = inspector(file);
-		const matches = certificates.filter(certificate => certificate.canEncrypt && certificate.emails.some(email => {
+		const matches = certificates.filter(certificate => certificate.canEncrypt && certificate.canSign
+			&& 1 === certificate.uidCount && 1 === certificate.emails.length && certificate.emails.some(email => {
 			const split = email.lastIndexOf('@');
 			const local = email.slice(0, split);
 			return split > 0 && email.slice(split + 1) === domain

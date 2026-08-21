@@ -4,6 +4,24 @@ namespace SnappyMail\PGP;
 
 abstract class Wkd
 {
+	/** Serialize vault state changes with WKD publication and production audits. */
+	public static function transaction(callable $callback)
+	{
+		$path = APP_PRIVATE_DATA . 'openpgpkey/.vault-transaction.lock';
+		\MailSo\Base\Utils::mkdir(\dirname($path));
+		$lock = \fopen($path, 'c');
+		if (!$lock || !\flock($lock, LOCK_EX)) {
+			\is_resource($lock) && \fclose($lock);
+			throw new \RuntimeException('Could not lock the browser vault/WKD transaction.');
+		}
+		try {
+			return $callback();
+		} finally {
+			\flock($lock, LOCK_UN);
+			\fclose($lock);
+		}
+	}
+
 	private const ZBASE32 = 'ybndrfg8ejkmcpqxot1uwisza345h769';
 
 	public static function normalizeLocal(string $local) : string
@@ -362,18 +380,86 @@ abstract class Wkd
 	{
 		$parts = static::emailParts($email);
 		$email = $parts ? $parts[0] . '@' . $parts[1] : '';
-		return $email && \in_array($email, static::publicKeyEmails($publicKey), true);
+		return $email && [$email] === static::publicKeyEmails($publicKey);
+	}
+
+	private static function removeInspectionDirectory(string $path) : void
+	{
+		if (!\is_dir($path) || \is_link($path)) {
+			return;
+		}
+		foreach (\array_diff(\scandir($path) ?: [], ['.', '..']) as $entry) {
+			$child = $path . '/' . $entry;
+			\is_dir($child) && !\is_link($child)
+				? static::removeInspectionDirectory($child)
+				: @\unlink($child);
+		}
+		@\rmdir($path);
+	}
+
+	/** Validate one mailbox-bound certificate with usable signing and encryption keys. */
+	public static function publicKeyUsableForEmail(string $email, string $publicKey) : bool
+	{
+		if (!static::publicKeyMatchesEmail($email, $publicKey)
+			|| !\is_callable('proc_open') || !\is_executable('/usr/bin/gpg')) {
+			return false;
+		}
+		$home = \sys_get_temp_dir() . '/snappymail-wkd-inspect-' . \bin2hex(\random_bytes(8));
+		if (!\mkdir($home, 0700)) {
+			return false;
+		}
+		try {
+			$process = \proc_open([
+				'/usr/bin/gpg', '--batch', '--no-options', '--homedir', $home,
+				'--with-colons', '--import-options', 'show-only', '--dry-run', '--import'
+			], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+			if (!\is_resource($process)) {
+				return false;
+			}
+			\fwrite($pipes[0], $publicKey);
+			\fclose($pipes[0]);
+			$output = (string) \stream_get_contents($pipes[1]);
+			\stream_get_contents($pipes[2]);
+			\fclose($pipes[1]);
+			\fclose($pipes[2]);
+			if (0 !== \proc_close($process)) {
+				return false;
+			}
+		} finally {
+			static::removeInspectionDirectory($home);
+		}
+
+		$certificates = 0;
+		$uids = 0;
+		$canEncrypt = false;
+		$canSign = false;
+		foreach (\explode("\n", $output) as $line) {
+			$fields = \explode(':', $line);
+			$type = $fields[0] ?? '';
+			if ('sec' === $type || 'ssb' === $type) {
+				return false;
+			}
+			if ('pub' === $type) {
+				++$certificates;
+				if (\in_array($fields[1] ?? '', ['r', 'e', 'd', 'i'], true)) {
+					return false;
+				}
+			}
+			'uid' === $type && ++$uids;
+			if ('pub' === $type || 'sub' === $type) {
+				$capabilities = \strtolower($fields[11] ?? '');
+				$canEncrypt = $canEncrypt || \str_contains($capabilities, 'e');
+				$canSign = $canSign || \str_contains($capabilities, 's');
+			}
+		}
+		return 1 === $certificates && 1 === $uids && $canEncrypt && $canSign;
 	}
 
 	private static function publicKeyMatchesObject(string $domain, string $hash, string $publicKey) : bool
 	{
-		foreach (static::publicKeyEmails($publicKey) as $email) {
-			$parts = static::emailParts($email);
-			if ($parts && $parts[1] === $domain && static::hash($parts[0]) === $hash) {
-				return true;
-			}
-		}
-		return false;
+		$emails = static::publicKeyEmails($publicKey);
+		$parts = 1 === \count($emails) ? static::emailParts($emails[0]) : null;
+		return $parts && $parts[1] === $domain && static::hash($parts[0]) === $hash;
 	}
 
 	public static function matches(string $email, string $publicKey) : bool
@@ -425,6 +511,56 @@ abstract class Wkd
 				: static::writeFileAtomically($path, $previous);
 			if (!$rolledBack) {
 				throw new \RuntimeException('WKD publication and key rollback both failed.');
+			}
+			return false;
+		} finally {
+			\flock($lock, LOCK_UN);
+			\fclose($lock);
+		}
+	}
+
+	/**
+	 * Withdraw one mailbox key without exposing or disturbing any other entry.
+	 * A failed manifest update restores the previous key object.
+	 */
+	public static function unpublish(string $email) : bool
+	{
+		$parts = static::emailParts($email);
+		if (!$parts) {
+			return false;
+		}
+
+		[$local, $domain] = $parts;
+		$hash = static::hash($local);
+		$path = static::publicKeyPath($domain, $hash);
+		$emailHash = static::emailHash($email);
+		$lockPath = \dirname(static::manifestPath($domain)) . '/.publish.lock';
+		\MailSo\Base\Utils::mkdir(\dirname($lockPath));
+		$lock = \fopen($lockPath, 'c');
+		if (!$path || !$lock || !\flock($lock, LOCK_EX)) {
+			\is_resource($lock) && \fclose($lock);
+			return false;
+		}
+		try {
+			$manifest = static::manifest($domain);
+			$entries = \array_values(\array_filter(
+				$manifest['entries'],
+				static fn(array $entry) : bool => $emailHash !== ($entry['email_hash'] ?? '')
+			));
+			$listed = \count($entries) !== \count($manifest['entries']);
+			$previous = \is_file($path) ? (string) \file_get_contents($path) : null;
+			if (null === $previous && !$listed) {
+				return true;
+			}
+			if (null !== $previous && !\unlink($path)) {
+				return false;
+			}
+			if (static::writeManifest($domain, $entries)) {
+				return true;
+			}
+			$rolledBack = null === $previous || static::writeFileAtomically($path, $previous);
+			if (!$rolledBack) {
+				throw new \RuntimeException('WKD withdrawal and key rollback both failed.');
 			}
 			return false;
 		} finally {
