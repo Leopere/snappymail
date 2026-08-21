@@ -148,9 +148,12 @@ namespace {
 	$assert(\SnappyMail\PGP\Wkd::publish($publishedEmail, $publishedKey),
 		'Creating a browser-vault key must publish its WKD object and hashed manifest entry.');
 	$publishedManifest = \SnappyMail\PGP\Wkd::manifest($publishedDomain);
+	$publishedManifestJson = (string) \file_get_contents(\SnappyMail\PGP\Wkd::manifestPath($publishedDomain));
 	$assert(1 === \count($publishedManifest['entries'])
 		&& $publishedHash === $publishedManifest['entries'][0]['wkd_hash'],
 		'A newly published key must be listed by its hashed manifest entry.');
+	$assert(!\str_contains($publishedManifestJson, $publishedEmail),
+		'The public hashed manifest must never disclose a plaintext mailbox address.');
 	$updatedKey = $publicPacket . $packet(13, "Updated Security <{$publishedEmail}>");
 	$assert(\SnappyMail\PGP\Wkd::publish($publishedEmail, $updatedKey),
 		'Updating a browser-vault key must update the existing WKD object and listing.');
