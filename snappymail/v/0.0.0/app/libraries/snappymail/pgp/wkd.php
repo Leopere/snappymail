@@ -225,24 +225,49 @@ abstract class Wkd
 			}
 		}
 
-		\MailSo\Base\Utils::mkdir(\dirname($path));
-		return false !== \file_put_contents($path, \json_encode([
+		return static::writeFileAtomically($path, \json_encode([
 			'version' => 1,
 			'algorithm' => 'sha256-email-v1',
 			'domain' => $domain,
 			'generated_at' => \gmdate('c'),
 			'entries' => \array_values($unique)
-		], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n", LOCK_EX);
+		], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 	}
 
-	private static function publishManifestEntry(string $email, string $domain, string $wkdHash) : void
+	private static function writeFileAtomically(string $path, string $data) : bool
+	{
+		$directory = \dirname($path);
+		\MailSo\Base\Utils::mkdir($directory);
+		$temporary = \tempnam($directory, '.wkd-');
+		if (false === $temporary) {
+			return false;
+		}
+		$written = false !== \file_put_contents($temporary, $data, LOCK_EX)
+			&& \chmod($temporary, 0600)
+			&& @\rename($temporary, $path);
+		\is_file($temporary) && \unlink($temporary);
+		return $written;
+	}
+
+	private static function manifestHasEntry(string $email, string $domain, string $wkdHash) : bool
+	{
+		$emailHash = static::emailHash($email);
+		foreach (static::manifest($domain)['entries'] as $entry) {
+			if ($emailHash === $entry['email_hash'] && $wkdHash === $entry['wkd_hash']) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static function publishManifestEntry(string $email, string $domain, string $wkdHash) : bool
 	{
 		$manifest = static::manifest($domain);
 		$manifest['entries'][] = [
 			'email_hash' => static::emailHash($email),
 			'wkd_hash' => $wkdHash
 		];
-		static::writeManifest($domain, $manifest['entries']);
+		return static::writeManifest($domain, $manifest['entries']);
 	}
 
 	public static function armoredPublicKeyToBinary(string $key) : string
@@ -361,7 +386,8 @@ abstract class Wkd
 		[$local, $domain] = $parts;
 		$binary = static::armoredPublicKeyToBinary($publicKey);
 		$current = $binary ? static::read($domain, static::hash($local), $local) : '';
-		return $current && \hash_equals($current, $binary);
+		return $current && \hash_equals($current, $binary)
+			&& static::manifestHasEntry($email, $domain, static::hash($local));
 	}
 
 	public static function publish(string $email, string $publicKey) : bool
@@ -379,12 +405,32 @@ abstract class Wkd
 			return false;
 		}
 
-		\MailSo\Base\Utils::mkdir(\dirname($path));
-		$published = false !== \file_put_contents($path, $binary, LOCK_EX);
-		if ($published) {
-			static::publishManifestEntry($email, $domain, $hash);
+		$lockPath = \dirname(static::manifestPath($domain)) . '/.publish.lock';
+		\MailSo\Base\Utils::mkdir(\dirname($lockPath));
+		$lock = \fopen($lockPath, 'c');
+		if (!$lock || !\flock($lock, LOCK_EX)) {
+			\is_resource($lock) && \fclose($lock);
+			return false;
 		}
-		return $published;
+		try {
+			$previous = \is_file($path) ? (string) \file_get_contents($path) : null;
+			if (!static::writeFileAtomically($path, $binary)) {
+				return false;
+			}
+			if (static::publishManifestEntry($email, $domain, $hash)) {
+				return true;
+			}
+			$rolledBack = null === $previous
+				? (!\is_file($path) || \unlink($path))
+				: static::writeFileAtomically($path, $previous);
+			if (!$rolledBack) {
+				throw new \RuntimeException('WKD publication and key rollback both failed.');
+			}
+			return false;
+		} finally {
+			\flock($lock, LOCK_UN);
+			\fclose($lock);
+		}
 	}
 
 	public static function read(string $domain, string $hash, string $local = '') : string

@@ -116,8 +116,12 @@ assert(
 		&& openPgpStore.includes('true !== record.published')
 		&& openPgpStore.includes('The OpenPGP public key could not be published to WKD.')
 		&& wkd.includes('public static function matches(string $email, string $publicKey) : bool')
+		&& wkd.includes('manifestHasEntry($email, $domain, static::hash($local))')
+		&& wkd.includes('if (static::publishManifestEntry($email, $domain, $hash))')
+		&& wkd.includes('\\flock($lock, LOCK_EX)')
+		&& wkd.includes("throw new \\RuntimeException('WKD publication and key rollback both failed.')")
 		&& wkd.includes('\\hash_equals($current, $binary)'),
-	'Vault persistence must fail closed until the matching public key is present in the local WKD store.'
+	'Vault persistence must fail closed until the matching public key object and hashed manifest entry are present.'
 );
 assert(
 	clientVault.includes("KDF_ITERATIONS = 600000")

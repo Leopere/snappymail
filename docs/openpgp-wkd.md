@@ -66,10 +66,11 @@ domain fails closed until OpenPGP protection is available.
 
 On first successful login, the browser creates an OpenPGP identity inside the
 browser vault and submits only its opaque encrypted vault record plus public
-key. The server writes the exact binary public key to its `hu/<hash>` object.
-The write succeeds only when that object matches the submitted public key. If
-publication fails, the server restores the previous opaque vault record rather
-than leaving an unpublished recipient identity behind.
+key. The server atomically writes the exact binary public key to its
+`hu/<hash>` object and upserts its hashed manifest entry. Create or update
+succeeds only when both are present and match the submitted public key. If
+publication fails, the server restores the previous key and opaque vault record
+rather than leaving an unpublished recipient identity behind.
 
 The public WKD response is authoritative. Branded webmail hosts may mirror the
 advanced response for usability, but standards-based sender discovery uses the

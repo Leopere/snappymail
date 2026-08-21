@@ -20,13 +20,42 @@ namespace RainLoop {
 	}
 }
 
+namespace MailSo\Base {
+	abstract class Utils
+	{
+		public static function mkdir(string $directory) : void
+		{
+			if (!\is_dir($directory) && !\mkdir($directory, 0700, true) && !\is_dir($directory)) {
+				throw new \RuntimeException("Unable to create {$directory}");
+			}
+		}
+	}
+}
+
 namespace {
 	$sourceRoot = \getenv('SNAPPYMAIL_SOURCE_ROOT') ?: \dirname(__DIR__, 2) . '/snappymail';
+	$ownsPrivateData = false;
 	if (!\defined('APP_VERSION')) {
 		\define('APP_VERSION', 'test');
 	}
 	if (!\defined('APP_PRIVATE_DATA')) {
-		\define('APP_PRIVATE_DATA', \sys_get_temp_dir() . '/snappymail-wkd-test/');
+		\define('APP_PRIVATE_DATA', \sys_get_temp_dir() . '/snappymail-wkd-test-' . \bin2hex(\random_bytes(8)) . '/');
+		$ownsPrivateData = true;
+	}
+	if ($ownsPrivateData) {
+		$removeTree = static function (string $path) use (&$removeTree) : void {
+			if (\is_file($path) || \is_link($path)) {
+				\unlink($path);
+				return;
+			}
+			if (\is_dir($path)) {
+				foreach (\array_diff(\scandir($path) ?: [], ['.', '..']) as $name) {
+					$removeTree($path . '/' . $name);
+				}
+				\rmdir($path);
+			}
+		};
+		\register_shutdown_function($removeTree, APP_PRIVATE_DATA);
 	}
 
 	require $sourceRoot . '/v/0.0.0/app/libraries/snappymail/log.php';
@@ -112,6 +141,123 @@ namespace {
 	\file_put_contents($bindingPath, $securityKey);
 	$assert($securityKey === \SnappyMail\PGP\Wkd::read('binding.example.test', $bindingHash, 'security'),
 		'A correctly bound WKD public key must remain readable.');
+	$publishedDomain = 'published.example.test';
+	$publishedEmail = 'security@' . $publishedDomain;
+	$publishedHash = \SnappyMail\PGP\Wkd::hash('security');
+	$publishedKey = $publicPacket . $packet(13, "Security <{$publishedEmail}>");
+	$assert(\SnappyMail\PGP\Wkd::publish($publishedEmail, $publishedKey),
+		'Creating a browser-vault key must publish its WKD object and hashed manifest entry.');
+	$publishedManifest = \SnappyMail\PGP\Wkd::manifest($publishedDomain);
+	$assert(1 === \count($publishedManifest['entries'])
+		&& $publishedHash === $publishedManifest['entries'][0]['wkd_hash'],
+		'A newly published key must be listed by its hashed manifest entry.');
+	$updatedKey = $publicPacket . $packet(13, "Updated Security <{$publishedEmail}>");
+	$assert(\SnappyMail\PGP\Wkd::publish($publishedEmail, $updatedKey),
+		'Updating a browser-vault key must update the existing WKD object and listing.');
+	$assert(1 === \count(\SnappyMail\PGP\Wkd::manifest($publishedDomain)['entries']),
+		'Updating a key must upsert its listing instead of creating a duplicate.');
+	$assert(\SnappyMail\PGP\Wkd::matches($publishedEmail, $updatedKey),
+		'A key is published only when both its object and manifest listing match.');
+	\unlink(\SnappyMail\PGP\Wkd::manifestPath($publishedDomain));
+	$assert(!\SnappyMail\PGP\Wkd::matches($publishedEmail, $updatedKey),
+		'A key object without its hashed listing must not count as published.');
+	$assert(\SnappyMail\PGP\Wkd::publish($publishedEmail, $updatedKey)
+		&& \SnappyMail\PGP\Wkd::matches($publishedEmail, $updatedKey),
+		'Republishing must repair a missing hashed manifest entry.');
+	$previousPublishedObject = (string) \file_get_contents(
+		\SnappyMail\PGP\Wkd::publicKeyPath($publishedDomain, $publishedHash)
+	);
+	\unlink(\SnappyMail\PGP\Wkd::manifestPath($publishedDomain));
+	\mkdir(\SnappyMail\PGP\Wkd::manifestPath($publishedDomain), 0700);
+	$replacementKey = $publicPacket . $packet(13, "Replacement Security <{$publishedEmail}>");
+	$assert(!\SnappyMail\PGP\Wkd::publish($publishedEmail, $replacementKey),
+		'An update must fail when its hashed listing cannot be committed.');
+	$assert($previousPublishedObject === \file_get_contents(
+		\SnappyMail\PGP\Wkd::publicKeyPath($publishedDomain, $publishedHash)
+	), 'A failed manifest update must restore the previous WKD key object.');
+	$failedDomain = 'failed-publication.example.test';
+	$failedEmail = 'security@' . $failedDomain;
+	$failedManifestPath = \SnappyMail\PGP\Wkd::manifestPath($failedDomain);
+	@\mkdir($failedManifestPath, 0700, true);
+	$failedKey = $publicPacket . $packet(13, "Security <{$failedEmail}>");
+	$assert(!\SnappyMail\PGP\Wkd::publish($failedEmail, $failedKey),
+		'Publication must fail when the hashed manifest entry cannot be committed.');
+	$assert(!\is_file(\SnappyMail\PGP\Wkd::publicKeyPath($failedDomain, \SnappyMail\PGP\Wkd::hash('security'))),
+		'A failed manifest commit must roll back a newly created WKD key object.');
+
+	$concurrentDomain = 'concurrent.example.test';
+	\is_dir(APP_PRIVATE_DATA) || \mkdir(APP_PRIVATE_DATA, 0700, true);
+	$worker = APP_PRIVATE_DATA . 'publish-worker.php';
+	$barrier = APP_PRIVATE_DATA . 'publish-go';
+	$workerSource = <<<'PHP'
+<?php
+namespace MailSo\Base {
+	abstract class Utils {
+		public static function mkdir(string $directory) : void {
+			if (!\is_dir($directory) && !\mkdir($directory, 0700, true) && !\is_dir($directory)) {
+				throw new \RuntimeException("Unable to create {$directory}");
+		}
+	}
+}
+}
+namespace {
+	define('APP_PRIVATE_DATA', $argv[1]);
+	require $argv[2] . '/v/0.0.0/app/libraries/snappymail/pgp/wkd.php';
+	file_put_contents($argv[4], 'ready');
+	$deadline = microtime(true) + 10;
+	while (!is_file($argv[5]) && microtime(true) < $deadline) usleep(1000);
+	$packet = static fn(int $tag, string $body) : string => chr(0xc0 | $tag) . chr(strlen($body)) . $body;
+	$key = $packet(6, "\x04" . str_repeat("\0", 10)) . $packet(13, "User <{$argv[3]}>");
+	exit(\SnappyMail\PGP\Wkd::publish($argv[3], $key) ? 0 : 1);
+}
+PHP;
+	\file_put_contents($worker, $workerSource);
+	$processes = [];
+	for ($index = 0; 12 > $index; ++$index) {
+		$email = "user{$index}@{$concurrentDomain}";
+		$ready = $barrier . "-{$index}";
+		$process = \proc_open([
+			PHP_BINARY,
+			$worker,
+			APP_PRIVATE_DATA,
+			$sourceRoot,
+			$email,
+			$ready,
+			$barrier
+		], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
+		$assert(\is_resource($process), 'The concurrent WKD publisher fixture must start.');
+		\fclose($pipes[0]);
+		$processes[] = [$process, $pipes, $ready];
+	}
+	$deadline = \microtime(true) + 10;
+	while (\microtime(true) < $deadline
+		&& 12 > \count(\glob($barrier . '-*') ?: [])) {
+		\usleep(1000);
+	}
+	$readyCount = \count(\glob($barrier . '-*') ?: []);
+	if (12 !== $readyCount) {
+		\file_put_contents($barrier, 'go');
+		$diagnostic = '';
+		foreach ($processes as [$process, $pipes]) {
+			$diagnostic .= (string) \stream_get_contents($pipes[1]);
+			$diagnostic .= (string) \stream_get_contents($pipes[2]);
+			\fclose($pipes[1]);
+			\fclose($pipes[2]);
+			\proc_close($process);
+		}
+		throw new \RuntimeException("Only {$readyCount} concurrent WKD publishers reached the barrier: {$diagnostic}");
+	}
+	\file_put_contents($barrier, 'go');
+	foreach ($processes as [$process, $pipes]) {
+		$stdout = (string) \stream_get_contents($pipes[1]);
+		$stderr = (string) \stream_get_contents($pipes[2]);
+		\fclose($pipes[1]);
+		\fclose($pipes[2]);
+		$assert(0 === \proc_close($process), "Concurrent WKD publication failed: {$stdout}{$stderr}");
+	}
+	$concurrentManifest = \SnappyMail\PGP\Wkd::manifest($concurrentDomain);
+	$assert(12 === \count($concurrentManifest['entries']),
+		'Concurrent key creation must retain every hashed manifest entry.');
 	$invokePrivate = static function (string $method, array $arguments) {
 		$reflection = new \ReflectionMethod(\SnappyMail\PGP\Keyservers::class, $method);
 		$reflection->setAccessible(true);
