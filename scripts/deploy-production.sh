@@ -22,10 +22,18 @@ require_var DEPLOY_IT_ENVIRONMENT
 [[ "$DEPLOY_IT_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail 'DEPLOY_IT_COMMIT must be one full lowercase Git commit ID'
 
 source_root="$(cd "$(dirname "$0")/.." && pwd)"
-controller_root="${HOME:?}/.local/share/boompay-vps-infra-l2-production-controller"
+for executable in docker gh python3 curl; do
+  command -v "$executable" >/dev/null 2>&1 || fail "$executable is required"
+done
+operator_home="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
+case "$operator_home" in
+  /*) ;;
+  *) fail 'deploying account home directory could not be resolved' ;;
+esac
+controller_root="$operator_home/.local/share/boompay-vps-infra-l2-production-controller"
 controller_env="$controller_root/.env"
-gh_config_dir="${HOME:?}/.config/gh"
-ship_it_bin="${SHIP_IT_BIN:-${HOME:?}/.local/bin/ship-it}"
+gh_config_dir="$operator_home/.config/gh"
+ship_it_bin="${SHIP_IT_BIN:-$operator_home/.local/bin/ship-it}"
 registry=ghcr.io/leopere/boompay-snappymail
 tag="$registry:git-$DEPLOY_IT_COMMIT"
 
@@ -33,9 +41,6 @@ tag="$registry:git-$DEPLOY_IT_COMMIT"
 [ -f "$controller_env" ] && [ ! -L "$controller_env" ] || fail 'production controller environment is unavailable'
 [ -d "$gh_config_dir" ] && [ ! -L "$gh_config_dir" ] || fail 'GitHub CLI configuration is unavailable'
 [ -x "$ship_it_bin" ] || fail 'ship-it is unavailable'
-for executable in docker gh python3 curl; do
-  command -v "$executable" >/dev/null 2>&1 || fail "$executable is required"
-done
 
 docker_config="$(mktemp -d)"
 metadata="$(mktemp)"
