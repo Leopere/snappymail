@@ -57,9 +57,10 @@ Send-time lookup is authoritative for automatic encryption. A cached browser
 key or application-local WKD copy cannot satisfy it. Every To/Cc/Bcc recipient
 must return a fresh public WKD key before encryption is used. If any result is
 absent, unusable, or times out, the address is treated as not ready for OpenPGP
-(for example, it may be new, mistyped, or never logged in). Compose retains the
-complete recipient set, warns that the message will be plaintext, and sends it
-without encryption.
+(for example, it may be new, mistyped, or never logged in). For external or
+mixed-domain mail, compose retains the complete recipient set and requires an
+explicit plaintext decision. Mail where every recipient shares the sender's
+domain fails closed until OpenPGP protection is available.
 
 ## Publishing
 
@@ -74,7 +75,8 @@ The public WKD response is authoritative. Branded webmail hosts may mirror the
 advanced response for usability, but standards-based sender discovery uses the
 recipient domain's `openpgpkey.` host and direct root WKD path. Static mirrors
 must copy the same exact `hu/<hash>` objects; legacy GnuPG sync scripts are not
-a source for browser-vault public keys.
+a source for browser-vault public keys. Static sync validates each object's UID,
+mailbox hashes, and encryption capability before replacing a mirror.
 
 ## Send Contract
 
@@ -83,8 +85,9 @@ is available, the browser encrypts to every recipient and the sender. It then
 parses the ciphertext it just created and verifies a recipient packet for every
 selected encryption subkey. There is no partial-recipient encryption and no
 server-side OpenPGP operation. A missing key, vault failure, encryption error,
-or unsupported encrypted attachment produces one plaintext message for every
-recipient with a non-blocking warning instead of blocking SMTP.
+or unsupported encrypted attachment blocks same-domain delivery. For external
+or mixed-domain delivery, it produces one plaintext message for every recipient
+only after an explicit warning and confirmation.
 
 ## Privacy
 

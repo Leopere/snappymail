@@ -88,8 +88,9 @@ recipient packets against every selected encryption subkey before handing the
 armored result to SMTP unchanged. A cached key cannot bypass a failed fresh
 lookup. If any key is missing, the vault is unavailable, browser crypto fails,
 or encrypted attachments are unsupported, compose retains every recipient,
-shows a non-blocking plaintext warning, and sends the original message
-plaintext. It never partially encrypts a recipient set. The server retrieves
+and blocks same-domain delivery. For external or mixed-domain delivery, it
+shows a plaintext warning and requires confirmation before sending the original
+message. It never partially encrypts a recipient set. The server retrieves
 encrypted MIME parts and signed MIME material but does not decrypt, sign, or
 verify OpenPGP mail.
 

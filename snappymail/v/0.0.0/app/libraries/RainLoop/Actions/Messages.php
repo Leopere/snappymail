@@ -1069,6 +1069,33 @@ trait Messages
 		}
 	}
 
+	private function requiresClientPgpEncryption(Account $account, \MailSo\Mime\Message $message) : bool
+	{
+		$from = \strtolower((string) $message->GetFrom()?->GetEmail());
+		$owned = [\strtolower($account->Email())];
+		foreach ($this->GetIdentities($account) as $identity) {
+			$identity && $owned[] = \strtolower($identity->Email());
+		}
+		if (!$from || !\in_array($from, \array_unique($owned), true)) {
+			throw new ClientException(
+				Notifications::ClientViewError,
+				null,
+				'The From address is not owned by the authenticated account.'
+			);
+		}
+		$senderDomain = \strtolower((string) $message->GetFrom()->GetDomain());
+		$hasRecipient = false;
+		foreach ([$message->GetTo(), $message->GetCc(), $message->GetBcc()] as $collection) {
+			foreach ($collection ?: [] as $email) {
+				$hasRecipient = true;
+				if ($senderDomain !== \strtolower((string) $email->GetDomain())) {
+					return false;
+				}
+			}
+		}
+		return $hasRecipient;
+	}
+
 	private function buildMessage(Account $oAccount, bool $bWithDraftInfo = true, bool $bSending = false) : \MailSo\Mime\Message
 	{
 		$oMessage = new \MailSo\Mime\Message();
@@ -1118,6 +1145,14 @@ trait Messages
 		$oMessage->SetTo(new \MailSo\Mime\EmailCollection($this->GetActionParam('to', '')));
 		$oMessage->SetCc(new \MailSo\Mime\EmailCollection($this->GetActionParam('cc', '')));
 		$oMessage->SetBcc(new \MailSo\Mime\EmailCollection($this->GetActionParam('bcc', '')));
+		if ($bSending && $this->requiresClientPgpEncryption($oAccount, $oMessage)
+			&& !$this->GetActionParam('encrypted', '')) {
+			throw new ClientException(
+				Notifications::ClientViewError,
+				null,
+				'Same-domain mail requires browser OpenPGP encryption.'
+			);
+		}
 
 		$aDraftInfo = $this->GetActionParam('draftInfo', null);
 		if ($bWithDraftInfo && \is_array($aDraftInfo) && !empty($aDraftInfo[0]) && !empty($aDraftInfo[1]) && !empty($aDraftInfo[2])) {

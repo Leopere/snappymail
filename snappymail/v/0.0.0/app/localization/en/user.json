@@ -273,6 +273,7 @@
 		"BUTTON_SEND": "Send",
 		"OPENPGP_PLAINTEXT_NOTICE": "This message will be sent in plaintext. OpenPGP could not be used for every recipient.",
 		"OPENPGP_PLAINTEXT_RECIPIENTS_NOTICE": "This message will be sent in plaintext. No current OpenPGP WKD key was found for: %RECIPIENTS%.",
+		"OPENPGP_INTERNAL_REQUIRED": "OpenPGP protection is required for messages within %DOMAIN%. Check the sender vault and recipient WKD keys, then try again.",
 		"OPENPGP_PLAINTEXT_VAULT_NOTICE": "This message will be sent in plaintext. Your browser encryption vault is unavailable: %ERROR%.",
 		"OPENPGP_PLAINTEXT_ATTACHMENT_NOTICE": "This message will be sent in plaintext. Browser OpenPGP attachments are not available yet.",
 		"OPENPGP_PLAINTEXT_ENCRYPTION_NOTICE": "This message will be sent in plaintext. Browser OpenPGP encryption could not be completed.",

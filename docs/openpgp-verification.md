@@ -63,7 +63,8 @@ these conditions:
    plaintext message, warns the user, and requires an explicit “Send plaintext”
    decision. Cancel keeps the compose contents intact and makes no send request.
 4. A stale browser-cached key cannot bypass a failed fresh WKD lookup; a forced
-   browser encryption failure also restores plaintext instead of blocking send.
+   browser encryption failure blocks same-domain mail. External or mixed-domain
+   mail restores plaintext and requires confirmation.
    Fresh discovery also waits for the login-time public-key list to finish loading,
    so an in-progress vault startup cannot overwrite the newly discovered key.
 5. The recipient decrypts the actual delivered mail and verifies its signature in the browser.

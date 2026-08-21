@@ -90,6 +90,7 @@ trait Pgp
 			&& 0 < ($record['revision'] ?? 0)
 			&& $this->clientVault(\json_encode($record['vault']))
 			&& $this->clientVaultPublicKey($record['publicKey'] ?? '')
+			&& Wkd::publicKeyMatchesEmail($account->Email(), $record['publicKey'])
 			? $record : null;
 	}
 

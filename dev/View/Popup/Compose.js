@@ -1465,6 +1465,13 @@ export class ComposePopupView extends AbstractViewPopup {
 		return emailsFromAddressFields([this.to(), this.cc(), this.bcc()]);
 	}
 
+	requiresOpenPgpProtection() {
+		const sender = normalizeEmail(getEmail(this.from())),
+			domain = sender.split('@')[1],
+			recipients = this.messageRecipients();
+		return !!(domain && recipients.length && recipients.every(email => email.split('@')[1] === domain));
+	}
+
 	automaticOpenPgpState() {
 		const recipients = this.messageRecipients(),
 			sender = normalizeEmail(getEmail(this.from())),
@@ -1625,6 +1632,11 @@ export class ComposePopupView extends AbstractViewPopup {
 			if (draft) {
 				return;
 			}
+			if (this.requiresOpenPgpProtection()) {
+				throw Error(i18n('COMPOSE/OPENPGP_INTERNAL_REQUIRED', {
+					DOMAIN: normalizeEmail(getEmail(this.from())).split('@')[1]
+				}));
+			}
 			automaticOpenPgp = false;
 			this.automaticOpenPgpPolicy = false;
 			this.signOptions([]);
@@ -1683,8 +1695,8 @@ export class ComposePopupView extends AbstractViewPopup {
 			}
 		}
 		if (!automaticOpenPgp) {
-			// A fresh WKD miss (or unavailable local vault) means one whole plaintext message.
-			// Do not partially encrypt, reuse a stale key, or stop normal mail delivery.
+			// A fresh WKD miss (or unavailable local vault) means one whole plaintext message
+			// for external delivery. Same-domain mail fails closed instead.
 			if (!draft) {
 				usePlaintextFallback(plaintextFallbackNotice);
 			}

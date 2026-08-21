@@ -88,6 +88,30 @@ namespace {
 			throw new \RuntimeException($message);
 		}
 	};
+	$packet = static function (int $tag, string $body) : string {
+		if (192 <= \strlen($body)) {
+			throw new \RuntimeException('The WKD packet fixture must remain short.');
+		}
+		return \chr(0xc0 | $tag) . \chr(\strlen($body)) . $body;
+	};
+	$publicPacket = $packet(6, "\x04" . \str_repeat("\0", 10));
+	$securityKey = $publicPacket . $packet(13, 'Security <security@binding.example.test>');
+	$colinKey = $publicPacket . $packet(13, 'Colin <colin@binding.example.test>');
+	$assert(\SnappyMail\PGP\Wkd::publicKeyMatchesEmail('security@binding.example.test', $securityKey),
+		'A WKD public key must expose the exact requested mailbox in a User ID packet.');
+	$assert(!\SnappyMail\PGP\Wkd::publicKeyMatchesEmail('security@binding.example.test', $colinKey),
+		'A different mailbox User ID must not be accepted at the requested WKD object.');
+	$assert([] === \SnappyMail\PGP\Wkd::publicKeyEmails($packet(5, 'secret') . $packet(13, 'security@binding.example.test')),
+		'A secret-key packet must never be accepted as a WKD public key.');
+	$bindingHash = \SnappyMail\PGP\Wkd::hash('security');
+	$bindingPath = \SnappyMail\PGP\Wkd::publicKeyPath('binding.example.test', $bindingHash);
+	@\mkdir(\dirname($bindingPath), 0700, true);
+	\file_put_contents($bindingPath, $colinKey);
+	$assert('' === \SnappyMail\PGP\Wkd::read('binding.example.test', $bindingHash, ''),
+		'A mismatched public key must not be served even when the WKD request omits the local-part query.');
+	\file_put_contents($bindingPath, $securityKey);
+	$assert($securityKey === \SnappyMail\PGP\Wkd::read('binding.example.test', $bindingHash, 'security'),
+		'A correctly bound WKD public key must remain readable.');
 	$invokePrivate = static function (string $method, array $arguments) {
 		$reflection = new \ReflectionMethod(\SnappyMail\PGP\Keyservers::class, $method);
 		$reflection->setAccessible(true);

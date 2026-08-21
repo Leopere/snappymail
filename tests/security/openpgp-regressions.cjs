@@ -252,14 +252,15 @@ assert(
 		&& composeView.includes('await this.initEncrypt(false)')
 		&& composeView.includes('const state = this.automaticOpenPgpState();')
 		&& composeView.includes('const usePlaintextFallback = notice =>')
+		&& composeView.includes('requiresOpenPgpProtection()')
+		&& composeView.includes("throw Error(i18n('COMPOSE/OPENPGP_INTERNAL_REQUIRED'")
 		&& composeView.includes('this.plaintextFallbackPending = true')
 		&& composeView.includes("this.plaintextNotice(notice || i18n('COMPOSE/OPENPGP_PLAINTEXT_NOTICE'))")
 		&& composeView.includes('this.doSign(false)')
 		&& composeView.includes('this.doEncrypt(false)')
 		&& !composeView.includes('ERROR_OPENPGP_RECIPIENTS_REQUIRED')
-		&& !composeView.includes('internalOpenPgpState()')
-		&& !composeView.includes('internalDomainRecipients()'),
-	'Compose must wait for the browser vault bootstrap, check every recipient WKD, encrypt only when the full recipient set is usable, and otherwise prepare one plaintext message.'
+		&& !composeView.includes('internalOpenPgpState()'),
+	'Compose must encrypt a fully usable recipient set, fail closed for same-domain delivery, and otherwise prepare one plaintext message.'
 );
 assert(
 	composeView.includes('automaticOpenPgpState()')
@@ -271,10 +272,29 @@ assert(
 		&& composeTemplate.includes('visible: plaintextNotice, text: plaintextNotice')
 		&& userLocalization.includes('OPENPGP_PLAINTEXT_NOTICE')
 		&& userLocalization.includes('OPENPGP_PLAINTEXT_RECIPIENTS_NOTICE')
+		&& userLocalization.includes('OPENPGP_INTERNAL_REQUIRED')
 		&& userLocalization.includes('OPENPGP_PLAINTEXT_VAULT_NOTICE')
 		&& userLocalization.includes('OPENPGP_PLAINTEXT_CONFIRMATION')
 		&& userLocalization.includes('OPENPGP_SEND_PLAINTEXT'),
-	'Any unavailable recipient key, sender-vault gap, attachment capability gap, or browser crypto failure must retain all recipients, restore plaintext, and show a truthful plaintext warning.'
+	'Same-domain protection gaps must block sending; external or mixed-domain gaps must retain all recipients, restore plaintext, and show a truthful warning.'
+);
+
+const wkdLibrary = read('snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php');
+const wkdSync = read('scripts/sync-wkd-static-sites.cjs');
+const messageActionsContract = read('snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Messages.php');
+assert(
+	pgpActions.includes("Wkd::publicKeyMatchesEmail($account->Email(), $record['publicKey'])")
+		&& wkdLibrary.includes('public static function publicKeyMatchesEmail')
+		&& wkdLibrary.includes('publicKeyMatchesObject($domain, $hash, $key)')
+		&& !wkdSync.includes('storage_root=')
+		&& !wkdSync.includes('/.gnupg')
+		&& wkdSync.includes('replaceTreeAtomically(targetRoot, staged =>')
+		&& messageActionsContract.includes('requiresClientPgpEncryption(')
+		&& messageActionsContract.includes('$account->Email()')
+		&& messageActionsContract.includes('$this->GetIdentities($account)')
+		&& messageActionsContract.includes("'The From address is not owned by the authenticated account.'")
+		&& messageActionsContract.includes("'Same-domain mail requires browser OpenPGP encryption.'"),
+	'Browser-vault keys must remain bound to their mailbox identity, and static sync must only copy validated active WKD objects.'
 );
 
 const askView = read('dev/View/Popup/Ask.js');

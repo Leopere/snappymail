@@ -258,10 +258,103 @@ abstract class Wkd
 		return false === $binary ? '' : $binary;
 	}
 
+	private static function packetLength(string $binary, int &$offset, int $lengthType, bool $newFormat) : int
+	{
+		$size = \strlen($binary);
+		if ($newFormat) {
+			if ($offset >= $size) {
+				return -1;
+			}
+			$first = \ord($binary[$offset++]);
+			if (192 > $first) {
+				return $first;
+			}
+			if (224 > $first) {
+				return $offset < $size ? (($first - 192) << 8) + \ord($binary[$offset++]) + 192 : -1;
+			}
+			if (255 === $first) {
+				if ($offset + 4 > $size) {
+					return -1;
+				}
+				$length = \unpack('Nlength', \substr($binary, $offset, 4));
+				$offset += 4;
+				return (int) ($length['length'] ?? -1);
+			}
+			// Partial-body packets are unnecessary for the small public keys accepted here.
+			return -1;
+		}
+
+		$bytes = [1, 2, 4][$lengthType] ?? 0;
+		if (!$bytes || $offset + $bytes > $size) {
+			return -1;
+		}
+		$length = 0;
+		for ($index = 0; $index < $bytes; ++$index) {
+			$length = ($length << 8) | \ord($binary[$offset++]);
+		}
+		return $length;
+	}
+
+	public static function publicKeyEmails(string $publicKey) : array
+	{
+		$binary = static::armoredPublicKeyToBinary($publicKey);
+		$size = \strlen($binary);
+		$offset = 0;
+		$emails = [];
+		$publicKeyPacket = false;
+		while ($offset < $size) {
+			$header = \ord($binary[$offset++]);
+			if (0x80 !== ($header & 0x80)) {
+				return [];
+			}
+			$newFormat = 0 !== ($header & 0x40);
+			$tag = $newFormat ? ($header & 0x3f) : (($header >> 2) & 0x0f);
+			$lengthType = $newFormat ? 0 : ($header & 0x03);
+			if (!$newFormat && 3 === $lengthType) {
+				return [];
+			}
+			$length = static::packetLength($binary, $offset, $lengthType, $newFormat);
+			if (0 > $length || $offset + $length > $size) {
+				return [];
+			}
+			$body = \substr($binary, $offset, $length);
+			$offset += $length;
+			if (5 === $tag || 7 === $tag) {
+				return [];
+			}
+			$publicKeyPacket = $publicKeyPacket || 6 === $tag;
+			if (13 === $tag && \preg_match_all('/[^\s<>]+@[^\s<>]+/', $body, $matches)) {
+				foreach ($matches[0] as $email) {
+					$parts = static::emailParts($email);
+					$parts && $emails[] = $parts[0] . '@' . $parts[1];
+				}
+			}
+		}
+		return $publicKeyPacket ? \array_values(\array_unique($emails)) : [];
+	}
+
+	public static function publicKeyMatchesEmail(string $email, string $publicKey) : bool
+	{
+		$parts = static::emailParts($email);
+		$email = $parts ? $parts[0] . '@' . $parts[1] : '';
+		return $email && \in_array($email, static::publicKeyEmails($publicKey), true);
+	}
+
+	private static function publicKeyMatchesObject(string $domain, string $hash, string $publicKey) : bool
+	{
+		foreach (static::publicKeyEmails($publicKey) as $email) {
+			$parts = static::emailParts($email);
+			if ($parts && $parts[1] === $domain && static::hash($parts[0]) === $hash) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static function matches(string $email, string $publicKey) : bool
 	{
 		$parts = static::emailParts($email);
-		if (!$parts) {
+		if (!$parts || !static::publicKeyMatchesEmail($email, $publicKey)) {
 			return false;
 		}
 
@@ -274,7 +367,7 @@ abstract class Wkd
 	public static function publish(string $email, string $publicKey) : bool
 	{
 		$parts = static::emailParts($email);
-		if (!$parts) {
+		if (!$parts || !static::publicKeyMatchesEmail($email, $publicKey)) {
 			return false;
 		}
 
@@ -303,6 +396,10 @@ abstract class Wkd
 		}
 
 		$path = static::publicKeyPath($domain, $hash);
-		return ($path && \is_file($path)) ? (string) \file_get_contents($path) : '';
+		$key = ($path && \is_file($path)) ? (string) \file_get_contents($path) : '';
+		if (!static::publicKeyMatchesObject($domain, $hash, $key)) {
+			return '';
+		}
+		return (!$local || static::publicKeyMatchesEmail("{$local}@{$domain}", $key)) ? $key : '';
 	}
 }
