@@ -1,62 +1,20 @@
 ---
 name: openpgp-wkd-gnupg
-description: Use when working in this SnappyMail fork on OpenPGP WKD, server-side GnuPG, automatic internal encryption/signing, recipient key discovery, Mail-in-a-Box GnuPG provisioning, or static WKD publication.
+description: "Use when working in this SnappyMail fork on OpenPGP WKD/public key discovery, hashed .well-known publication, WKD policy/manifest/TXT discovery, Mail-in-a-Box GnuPG provisioning, or syncing static WKD sites."
 ---
 
 # OpenPGP WKD GnuPG
 
-## Overview
+## Purpose
 
-This repository has a server-managed OpenPGP path. Treat WKD plus server-side GnuPG as a first-class feature, not a one-off patch.
+SnappyMail must discover public OpenPGP keys from standards-compatible WKD without learning or publishing directory-style mailbox lists. The public source of truth is binary OpenPGP key material served from hashed `hu/<hash>` paths plus a WKD `policy` endpoint; any project manifest, DNS TXT pointer, or static-site mirror is only a discovery hint and must expose hashed identifiers, never plaintext mailbox addresses.
 
-Use `docs/openpgp-wkd.md` as the local architecture note before changing behavior.
+## Contract
 
-## Core Rules
+Preserve the advanced WKD path shape `/.well-known/openpgpkey/{domain}/hu/{hash}?l={local}` and the direct WKD shape `/.well-known/openpgpkey/hu/{hash}?l={local}` wherever this instance is responsible for serving them. The active source key is the browser vault public key, never server-side GnuPG material. Vault persistence succeeds only after the exact binary public key exists at its hashed WKD object; a failed publish rolls the vault record back.
 
-- Keep standards-compatible WKD as the public surface:
-  - `/.well-known/openpgpkey/hu/{hash}?l={local}`
-  - `/.well-known/openpgpkey/{domain}/hu/{hash}?l={local}`
-  - `/.well-known/openpgpkey/policy`
-- Store and publish binary OpenPGP public key material, not armored text, at WKD `hu/<hash>` paths.
-- Publish only keys backed by server-side GnuPG material for that account. Do not publish browser-only OpenPGP.js keys.
-- Same-domain mail must remain interaction-free: create/import needed server GnuPG keys ahead of time, then sign and encrypt automatically at send time.
-- External mail may discover keys with WKD. Only auto-encrypt external recipients when every recipient has a usable key; otherwise fail open to ordinary mail.
-- Never add directory listing, index-of-addresses, or plaintext mailbox publication. The optional manifest extension may expose hashes only.
+At send time, accept only a fresh key from a domain-owned public WKD endpoint or a validated public hashed manifest/TXT pointer. Never satisfy automatic encryption from a local cache, an old browser cache, a plaintext mailbox list, or a partial recipient set. If any recipient lacks a fresh usable key, retain every recipient and send one plaintext message with a non-blocking warning. Verify `openpgpkey.<domain>` and the branded webmail mirror before declaring discovery fixed, and keep `docs/openpgp-wkd.md` and the public profile in `../colinknapp-com/docs/specs/openpgp-wkd-profile.md` aligned with that behavior.
 
-## Implementation Map
+## Code Map
 
-- WKD hashing, path validation, manifest filtering, and public-key publication: `snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php`
-- WKD recipient discovery and optional TXT/manifest extension: `snappymail/v/0.0.0/app/libraries/snappymail/pgp/keyservers.php`
-- GnuPG account keyring selection, import, publish, decrypt, verify, and key lookup actions: `snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Pgp.php`
-- WKD HTTP routes and policy handling: `snappymail/v/0.0.0/app/libraries/RainLoop/Service.php` and `ServiceActions.php`
-- Compose/send-time automation: `dev/View/Popup/Compose.js`, `dev/Stores/User/GnuPG.js`, and server send logic under `RainLoop/Actions/Messages.php`
-- Mail-in-a-Box provisioning for all active users in a domain: `scripts/provision-miab-domain-gnupg.cjs`
-- Static WKD mirroring into adjacent sites: `scripts/sync-wkd-static-sites.cjs`
-- Local WKD tests: `tests/php/wkd-hash.php`
-
-## Operational Checks
-
-- For production Mail-in-a-Box domains, provision server-side keys with:
-
-```sh
-npm run provision:miab-gpg -- nixc.us
-```
-
-- To sync static `.well-known/openpgpkey` trees after key changes, run:
-
-```sh
-node scripts/sync-wkd-static-sites.cjs
-```
-
-- Before changing hashing, verify the local implementation against GnuPG WKD output when available:
-
-```sh
-php tests/php/wkd-hash.php
-gpg-wks-client --print-wkd-hash user@example.com
-```
-
-## Documentation Targets
-
-- Keep repo implementation docs in `docs/openpgp-wkd.md`.
-- Keep the public deployment profile in `../colinknapp-com/docs/specs/openpgp-wkd-profile.md`.
-- If behavior diverges from the public profile, update the implementation first or clearly mark the extension as non-standard.
+WKD hashing and publication live in `snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php`. WKD recipient discovery and optional public manifest/TXT lookup live in `snappymail/v/0.0.0/app/libraries/snappymail/pgp/keyservers.php`. HTTP routes are in `snappymail/v/0.0.0/app/libraries/RainLoop/Service.php` and `ServiceActions.php`; the opaque browser vault endpoint is in `snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Pgp.php`. Browser key lifecycle is in `dev/Stores/User/OpenPGP.js` and `dev/Storage/OpenPgpVault.js`. Legacy GnuPG provisioning and static sync scripts are not part of the browser-vault key lifecycle.

@@ -12,6 +12,26 @@ const nProps = [
 	'nameSuffix'
 ];
 
+const
+	FAVORITE_CATEGORY = 'Favorite',
+	isCategoriesProperty = prop => Array.isArray(prop) && 'categories' === String(prop[0] || '').toLowerCase(),
+	isFavoriteCategory = value => FAVORITE_CATEGORY.toLowerCase() === String(value || '').trim().toLowerCase(),
+	categoryProperties = jCard => Array.isArray(jCard?.[1]) ? jCard[1].filter(isCategoriesProperty) : [],
+	hasFavoriteCategory = jCard => categoryProperties(jCard).some(prop => prop.slice(3).some(isFavoriteCategory)),
+	setFavoriteCategory = (jCard, favorite, sourceJCard = jCard) => {
+		const properties = Array.isArray(jCard?.[1]) ? jCard[1] : [],
+			categories = categoryProperties(sourceJCard)
+				.map(prop => {
+					const values = prop.slice(3).filter(value => !isFavoriteCategory(value));
+					return values.length ? prop.slice(0, 3).concat(values) : null;
+				})
+				.filter(prop => prop),
+			nonCategories = properties.filter(prop => !isCategoriesProperty(prop));
+
+		favorite && categories.push(['categories', {}, 'text', FAVORITE_CATEGORY]);
+		jCard[1] = nonCategories.concat(categories);
+	};
+
 /*
 const propertyMap = [
 	// vCard 2.1 properties and up
@@ -90,6 +110,7 @@ export class ContactModel extends AbstractModel {
 
 			deleted: false,
 			readOnly: false,
+			favorite: false,
 
 			id: 0,
 			givenName:  '', // FirstName
@@ -188,6 +209,7 @@ export class ContactModel extends AbstractModel {
 			contact.signpref(props?.params.signpref || 'Ask');
 			contact.encryptpref(props?.params.encryptpref || 'Ask');
 //			contact.encryptpref(props?.params.allowed || 'PGP/INLINE,PGP/MIME,S/MIME,S/MIMEOpaque');
+			contact.favorite(hasFavoriteCategory(json.jCard));
 
 			contact.jCard = json.jCard;
 		}
@@ -284,9 +306,14 @@ export class ContactModel extends AbstractModel {
 		// Done by server
 //		jCard.set('rev', '2022-05-21T10:59:52Z')
 
+		const serializedJCard = jCard.toJSON();
+		// Preserve every existing CATEGORIES value. JCard only keeps the first
+		// value of a multi-valued property while editing other contact fields.
+		setFavoriteCategory(serializedJCard, this.favorite(), this.jCard);
+
 		return {
 			uid: this.id,
-			jCard: JSON.stringify(jCard)
+			jCard: JSON.stringify(serializedJCard)
 		};
 	}
 
@@ -296,6 +323,7 @@ export class ContactModel extends AbstractModel {
 	lineAsCss() {
 		return (this.selected() ? 'selected' : '')
 			+ (this.deleted() ? ' deleted' : '')
+			+ (this.favorite() ? ' favorite' : '')
 			+ (this.checked() ? ' checked' : '')
 			+ (this.focused() ? ' focused' : '');
 	}

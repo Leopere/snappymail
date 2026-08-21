@@ -41,7 +41,7 @@ export class AccountPopupView extends AbstractViewPopup {
 						loadAccountsAndIdentities();
 						this.close();
 					}
-				}, data
+				}, data, 20000
 			);
 		}
 	}

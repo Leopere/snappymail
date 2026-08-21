@@ -12,11 +12,15 @@ ContactUserStore.syncing = ko.observable(false).extend({ debounce: 200 });
 
 addObservablesTo(ContactUserStore, {
 	allowSync: false, // Admin setting
+	syncAuto: false,
 	syncMode: 0,
 	syncUrl: '',
 	syncUser: '',
 	syncPass: ''
 });
+
+let syncStartTimer = 0,
+	syncIntervalTimer = 0;
 
 // Also used by Selector
 ContactUserStore.hasChecked = koComputable(
@@ -38,27 +42,57 @@ ContactUserStore.sync = fResultFunc => {
 			try {
 				line = JSON.parse(line);
 				if ('ContactsSync' === line.Action) {
-					ContactUserStore.syncing(false);
 					fResultFunc?.(line.code, line);
 				}
 			} catch (e) {
-				ContactUserStore.syncing(false);
 				console.error(e);
 				fResultFunc?.(Notifications.UnknownError);
 			}
-		}, 'ContactsSync');
+		}, 'ContactsSync', null, 9000)
+			.catch(error => {
+				console.warn('CardDAV sync did not finish', error);
+				fResultFunc?.(Notifications.RequestTimeout);
+			})
+			.finally(() => ContactUserStore.syncing(false));
+	}
+};
+
+ContactUserStore.applySyncConfig = config => {
+	ContactUserStore.allowSync(!!config);
+	if (config) {
+		ContactUserStore.syncAuto(!!config.Auto);
+		ContactUserStore.syncMode(Number(config.Mode) || 0);
+		ContactUserStore.syncUrl(config.Url || '');
+		ContactUserStore.syncUser(config.User || '');
+		ContactUserStore.syncPass(config.Password || '');
+	}
+};
+
+ContactUserStore.scheduleSync = config => {
+	clearTimeout(syncStartTimer);
+	clearInterval(syncIntervalTimer);
+	if (ContactUserStore.syncMode()) {
+		syncStartTimer = setTimeout(ContactUserStore.sync, 10000);
+		syncIntervalTimer = setInterval(ContactUserStore.sync,
+			Math.max(20, Number(config?.Interval) || 20) * 60000 + 5000
+		);
 	}
 };
 
 ContactUserStore.init = () => {
-	let config = SettingsGet('ContactsSync');
-	ContactUserStore.allowSync(!!config);
-	if (config) {
-		ContactUserStore.syncMode(config.Mode);
-		ContactUserStore.syncUrl(config.Url);
-		ContactUserStore.syncUser(config.User);
-		ContactUserStore.syncPass(config.Password);
-		setTimeout(ContactUserStore.sync, 10000);
-		setInterval(ContactUserStore.sync, config.Interval * 60000 + 5000);
+	const config = SettingsGet('ContactsSync');
+	ContactUserStore.applySyncConfig(config);
+	ContactUserStore.scheduleSync(config);
+
+	if (config?.Auto && !config.Disabled && !ContactUserStore.syncMode()) {
+		setTimeout(() => Remote.post('DiscoverContactsSync', null, {}, 5000)
+			.then(response => {
+				const discovered = response?.Result;
+				if (discovered) {
+					ContactUserStore.applySyncConfig(discovered);
+					ContactUserStore.scheduleSync(discovered);
+				}
+			})
+			.catch(() => false), 1000);
 	}
 };

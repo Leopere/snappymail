@@ -1,0 +1,29 @@
+{
+	"name": "BoomPay",
+	"short_name": "BoomPay Mail",
+	"description": "BoomPay webmail for Ontario repair businesses",
+	"display": "standalone",
+	"background_color": "white",
+	"theme_color": "#0E1A2B",
+	"icons": [
+		{
+			"src": "boompay-apple-touch-icon.png",
+			"sizes": "180x180",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "boompay-favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		},
+		{
+			"src": "boompay-logo.webp",
+			"sizes": "512x512",
+			"type": "image/webp",
+			"purpose": "any maskable"
+		}
+	],
+	"start_url": "/"
+}

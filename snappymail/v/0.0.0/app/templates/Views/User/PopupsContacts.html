@@ -64,6 +64,9 @@
 					<div class="e-contact-item g-ui-user-select-none" data-bind="css: lineAsCss()">
 						<div class="checkboxItem fontastic" data-bind="text: checked() ? '☑' : '☐'"></div>
 						<div class="nameParent" data-bind="text: display"></div>
+						<button type="button" class="favoriteContact fontastic" aria-label="Toggle favorite"
+							data-bind="click: $root.toggleFavorite, css: {active: favorite}, attr: {'aria-pressed': favorite() ? 'true' : 'false'}"
+							data-i18n="[title]CONTACTS/TOGGLE_FAVORITE"><span data-bind="text: favorite() ? '★' : '☆'"></span></button>
 					</div>
 				</div>
 			</div>

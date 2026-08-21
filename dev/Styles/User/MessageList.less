@@ -2,6 +2,8 @@
 #V-MailMessageList {
 	position: relative;
 	height: 100%;
+	max-width: 100%;
+	overflow: hidden;
 	width: 100%;
 }
 
@@ -23,6 +25,8 @@
 
 .messageList {
 	height: calc(100% - 60px);
+	max-width: 100%;
+	overflow: hidden;
 	background-color: var(--panel-bg-clr, #fff);
 	border: 1px solid var(--border-color, #aaa);
 	border-radius: var(--border-radius, 5px);
@@ -101,6 +105,7 @@
 
 	.search-input-wrp {
 		flex-grow: 1;
+		min-width: 0;
 	}
 
 	.inputSearch {
@@ -110,8 +115,21 @@
 	.b-content {
 		height: 100%;
 		padding: 0;
-		overflow: auto;
+		overflow-x: hidden;
+		overflow-y: auto;
+		overscroll-behavior-x: none;
 		scroll-behavior: smooth;
+
+		&.swipe-locked {
+			overscroll-behavior: none;
+			scroll-behavior: auto;
+			touch-action: none;
+		}
+
+		.messageListPlace {
+			max-width: 100%;
+			overflow: hidden;
+		}
 
 		.listClear {
 			text-align: center;
@@ -152,6 +170,28 @@
 			border-bottom: 1px solid #eee;
 		}
 
+		.listSelectionNotice {
+			align-items: center;
+			background: rgba(57, 140, 242, 0.1);
+			border-bottom: 1px solid rgba(57, 140, 242, 0.2);
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px 12px;
+			line-height: 1.4;
+			padding: 9px 12px;
+
+			&.allSelected {
+				background: rgba(46, 164, 79, 0.1);
+				border-bottom-color: rgba(46, 164, 79, 0.24);
+			}
+
+			&.error {
+				background: rgba(218, 79, 73, 0.08);
+				border-bottom-color: rgba(218, 79, 73, 0.24);
+				color: #DA4F49;
+			}
+		}
+
 		.listThreadUidDesc {
 			font-size: 114%;
 			padding: 7px 20px 6px 20px;
@@ -172,22 +212,30 @@
 	}
 }
 
-.messageListItem > div + div {
+.messageListItemContent {
 	display: flex;
+	flex: 1 1 auto;
+	min-width: 0;
 	overflow: hidden;
 	padding: 5px 0 5px 5px;
-	width: 100%;
 }
 
 .messageListItem {
+	background-color: var(--panel-bg-clr, #fff);
+	box-sizing: border-box;
 	cursor: pointer;
 	border: 0;
 	border-bottom: 1px solid rgba(153, 153, 153, 0.2);
 	border-left: 6px solid transparent;
-	display: flex;
+	display: block;
 	font-size: 90%;
 	line-height: 2;
+	max-height: 120px;
+	max-width: 100%;
+	overflow: hidden;
 	position: relative;
+	transition: max-height 180ms ease, opacity 180ms ease, border-width 180ms ease;
+	width: 100%;
 /*
 	> * {
 		display: flex;
@@ -195,6 +243,108 @@
 		order: 0;
 	}
 */
+	.messageListItemForeground {
+		background-color: inherit;
+		display: flex;
+		max-width: 100%;
+		min-width: 0;
+		position: relative;
+		transform: translate3d(var(--message-swipe-x, 0), 0, 0);
+		transition: transform 180ms ease-out;
+		width: 100%;
+		z-index: 1;
+	}
+
+	&.swipe-active .messageListItemForeground {
+		transition: none;
+		will-change: transform;
+	}
+
+	&.swipe-active {
+		contain: layout paint;
+		height: var(--message-swipe-height);
+		max-height: var(--message-swipe-height);
+		max-width: var(--message-swipe-width);
+		min-height: var(--message-swipe-height);
+		min-width: var(--message-swipe-width);
+		width: var(--message-swipe-width);
+
+		.messageListItemForeground,
+		.messageSwipeActions {
+			height: 100%;
+			width: 100%;
+		}
+	}
+
+	&.swipe-pending {
+		border-width: 0;
+		max-height: 0;
+		min-height: 0;
+		opacity: 0;
+	}
+
+	.messageSwipeActions {
+		display: flex;
+		inset: 0;
+		pointer-events: none;
+		position: absolute;
+		z-index: 0;
+	}
+
+	.messageSwipeAction {
+		align-items: center;
+		box-sizing: border-box;
+		color: #fff;
+		display: flex;
+		font-size: 100%;
+		font-weight: 600;
+		visibility: hidden;
+		width: 50%;
+
+		[data-swipe-label] {
+			display: none;
+		}
+	}
+
+	.messageSwipeActionStart {
+		background: #287d45;
+		justify-content: flex-start;
+		padding-left: 18px;
+	}
+
+	.messageSwipeActionEnd {
+		background: #a9342f;
+		justify-content: flex-end;
+		margin-left: auto;
+	}
+
+	&[data-swipe-direction="right"] .messageSwipeActionStart,
+	&[data-swipe-direction="left"] .messageSwipeActionEnd {
+		visibility: visible;
+	}
+
+	&[data-swipe-action="archive"] [data-swipe-label="archive"],
+	&[data-swipe-action="snooze"] [data-swipe-label="snooze"],
+	&[data-swipe-action="delete"] [data-swipe-label="delete"],
+	&[data-swipe-action="spam"] [data-swipe-label="spam"] {
+		align-items: center;
+		display: inline-flex;
+		gap: 6px;
+	}
+
+	&[data-swipe-action="snooze"] .messageSwipeActionStart {
+		background: #8a6500;
+	}
+
+	&[data-swipe-action="delete"] .messageSwipeActionEnd {
+		padding-right: 18px;
+	}
+
+	&[data-swipe-action="spam"] .messageSwipeActionEnd {
+		background: #873ca3;
+		padding-right: 18px;
+	}
+
 	&.focused {
 		background-color: rgba(128, 128, 128, 0.1);
 		border-left-color: #ccc;
@@ -208,6 +358,7 @@
 	}
 
 	.messageCheckbox {
+		flex: 0 0 auto;
 		font-size: 114%;
 		padding: 5px .5em 0;
 		white-space: nowrap;
@@ -245,6 +396,60 @@
 		opacity: 0.5;
 	}
 
+	.messageCategoryBadge {
+		align-self: center;
+		background: rgba(95, 103, 112, 0.1);
+		border: 1px solid rgba(95, 103, 112, 0.3);
+		border-radius: 999px;
+		color: var(--text-color, #4c535a);
+		flex: 0 0 auto;
+		font-size: 72%;
+		font-weight: 600;
+		line-height: 1.4;
+		margin: 0 5px 0 3px;
+		max-width: 7.5em;
+		overflow: hidden;
+		padding: 2px 7px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.receiptSuccessIcon {
+		align-items: center;
+		border-radius: 999px;
+		cursor: pointer;
+		display: inline-flex;
+		flex: 0 0 28px;
+		font-size: 16px;
+		font-weight: 700;
+		height: 28px;
+		justify-content: center;
+		line-height: 1;
+		margin: 0 5px 0 2px;
+		padding: 0;
+		width: 28px;
+
+		&:focus-visible {
+			outline: 2px solid currentColor;
+			outline-offset: 1px;
+		}
+	}
+
+	.deliverySuccessIcon {
+		background: rgba(24, 134, 75, 0.12);
+		border: 1px solid rgba(24, 134, 75, 0.38);
+		color: #13733f;
+	}
+
+	.readSuccessIcon {
+		background: rgba(30, 101, 190, 0.12);
+		border: 1px solid rgba(30, 101, 190, 0.4);
+		color: #185da8;
+		font-size: 12px;
+		letter-spacing: -3px;
+		padding-right: 3px;
+	}
+
 	.threadsCountParent {
 		display: inline;
 		overflow: hidden;
@@ -266,9 +471,14 @@
 	}
 
 	.threads-len {
+		align-items: center;
 		border-radius: var(--border-radius, 5px);
 		border: 1px solid #ccc;
+		display: inline-flex;
 		font-size: 80%;
+		justify-content: center;
+		min-height: 26px;
+		min-width: 26px;
 		padding: 0 4px;
 		white-space: nowrap;
 		&:hover {
@@ -326,15 +536,18 @@
 		min-width: 1em;
 	}
 	.flagParent::after {
-		content: '☆'; /*⚐*/
+		content: '📌';
+		filter: grayscale(1);
+		font-family: system-ui, sans-serif;
+		opacity: .35;
 	}
 	&.msgflag-\\flagged .flagParent::after,
 	&.hasFlaggedSubMessage .flagParent::after {
-		color: orange;
-		content: '★'; /*⚑*/
+		filter: none;
+		opacity: 1;
 	}
 	&:not(.msgflag-\\flagged):not(.hasFlaggedSubMessage) .flagParent:not(:hover)::after {
-		opacity: 0.5;
+		opacity: .35;
 	}
 
 	.senderParent::before {
@@ -357,6 +570,37 @@
 	}
 }
 
+.messageActionUndo {
+	align-items: center;
+	background: #252525;
+	border-radius: 4px;
+	bottom: 18px;
+	box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
+	box-sizing: border-box;
+	color: #fff;
+	display: flex;
+	gap: 16px;
+	justify-content: space-between;
+	left: 50%;
+	max-width: calc(100vw - 24px);
+	min-height: 48px;
+	padding: 8px 10px 8px 16px;
+	position: fixed;
+	transform: translateX(-50%);
+	width: min(360px, calc(100vw - 24px));
+	z-index: 1200;
+
+	button {
+		background: transparent;
+		border: 0;
+		color: #8fc5ff;
+		font: inherit;
+		font-weight: bold;
+		min-height: 40px;
+		padding: 0 10px;
+	}
+}
+
 html:not(.sm-msgView-bottom):not(.sm-msgView-side) .message-selected #V-MailMessageList {
 	display: none;
 }
@@ -365,6 +609,46 @@ html:not(.sm-msgView-bottom):not(.sm-msgView-side) .message-selected #V-MailMess
 	#V-MailMessageList .btn-toolbar:not(.hasChecked) .onCheckedShow,
 	#V-MailMessageList .hasChecked .onCheckedHide {
 		display: none;
+	}
+
+	.messageList:not(.mobileSelectionMode) .messageCheckbox {
+		display: none;
+	}
+
+	.messageList:not(.mobileSelectionMode) .checkboxCheckAll {
+		display: none;
+	}
+
+		.messageListItem {
+			min-height: 52px;
+			touch-action: pan-y pinch-zoom;
+
+			.messageCategoryBadge {
+				font-size: 70%;
+				max-width: 6.5em;
+			}
+
+		.receiptSuccessIcon {
+			flex-basis: 44px;
+			height: 44px;
+			width: 44px;
+		}
+
+		.sizeParent {
+			display: none;
+		}
+
+		.threads-len {
+			min-height: 36px;
+			min-width: 36px;
+		}
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.messageListItem,
+	.messageListItem .messageListItemForeground {
+		transition: none;
 	}
 }
 
@@ -423,12 +707,16 @@ html:not(.sm-msgView-bottom):not(.sm-msgView-side) .message-selected #V-MailMess
 
 .sm-msgView-side, .rl-mobile {
 
-	.messageListItem > div + div {
+	.messageListItemContent {
 		flex-wrap: wrap;
 	}
 
-	.messageListItem {
-		line-height: 1.5;
+		.messageListItem {
+			line-height: 1.5;
+
+			.messageCategoryBadge {
+				order: 0;
+			}
 
 		.messageCheckbox {
 			padding-top: 0.8em;
@@ -442,7 +730,7 @@ html:not(.sm-msgView-bottom):not(.sm-msgView-side) .message-selected #V-MailMess
 			flex: 1 0 auto;
 			line-height: 16px;
 			order: 1;
-			width: calc(100% - 120px);
+			width: calc(100% - 80px);
 		}
 
 		.flagParent {

@@ -36,6 +36,10 @@
 .squire-toolbar button[data-action="italic"] {
 	font-style: italic;
 }
+
+.squire-toolbar #squire-toolgroup-more {
+	display: none;
+}
 /*
 .squire-toolbar button[data-action="underline"] {
 	text-decoration: underline;
@@ -44,6 +48,96 @@
 	text-decoration: line-through;
 }
 */
+
+@media screen and (max-width: @maxMobileWidth) {
+	#V-PopupsCompose :not(.CompactComposer) > .squire-toolbar.btn-toolbar {
+		align-items: center;
+		box-sizing: border-box;
+		display: flex;
+		flex-wrap: nowrap;
+		gap: 4px;
+		min-height: 53px;
+		overflow: hidden;
+		padding: 4px 6px;
+		white-space: normal;
+
+		> .btn-group {
+			display: none;
+			float: none;
+			gap: 4px;
+			margin: 0;
+		}
+
+		> #squire-toolgroup-more,
+		> #squire-toolgroup-inline,
+		> #squire-toolgroup-block,
+		> #squire-toolgroup-targets {
+			display: inline-flex;
+		}
+
+		> #squire-toolgroup-more {
+			order: 100;
+
+			> .btn {
+				font-family: var(--fontSans);
+				padding-left: 10px;
+				padding-right: 10px;
+			}
+		}
+
+		&:not(.squire-toolbar-expanded) {
+			#squire-toolgroup-inline > [data-action="underline"],
+			#squire-toolgroup-inline > [data-action="strike"],
+			#squire-toolgroup-inline > [data-action="sub"],
+			#squire-toolgroup-inline > [data-action="sup"],
+			#squire-toolgroup-block > [data-action="ol"],
+			#squire-toolgroup-block > [data-action="quote"],
+			#squire-toolgroup-block > [data-action="indentDecrease"],
+			#squire-toolgroup-block > [data-action="indentIncrease"],
+			#squire-toolgroup-targets > [data-action="imageUrl"],
+			#squire-toolgroup-targets > [data-action="imageUpload"] {
+				display: none;
+			}
+		}
+
+		.btn {
+			box-sizing: border-box;
+			min-height: 44px;
+			min-width: 44px;
+		}
+
+		&.squire-toolbar-expanded {
+			background: var(--dialog-bg-clr, #fff);
+			box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+			flex-wrap: wrap;
+			left: 0;
+			max-height: 55dvh;
+			overflow-y: auto;
+			position: absolute;
+			right: 0;
+			top: 0;
+			z-index: 10;
+
+			> .btn-group {
+				display: inline-flex;
+			}
+
+			> #squire-toolgroup-more {
+				order: -1;
+			}
+		}
+	}
+
+	#V-PopupsCompose .squire-mode-plain:not(.CompactComposer) > .squire-toolbar.btn-toolbar {
+		> .btn-group {
+			display: none;
+		}
+
+		> #squire-toolgroup-mode {
+			display: inline-flex;
+		}
+	}
+}
 
 .squire-wysiwyg, .squire-plain {
 	height: 100%;

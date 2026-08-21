@@ -65,19 +65,25 @@ abstract class Service
 			\ob_start();
 		}
 
-		$sQuery = \trim($_SERVER['QUERY_STRING'] ?? '');
-		$iPos = \strpos($sQuery, '&');
-		if (0 < $iPos) {
-			$sQuery = \substr($sQuery, 0, $iPos);
+		$sPath = \parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
+		$sScript = $_SERVER['SCRIPT_NAME'] ?? '';
+		if ($sScript && \str_starts_with($sPath, $sScript . '/')) {
+			$sPath = \substr($sPath, \strlen($sScript) + 1);
 		}
-		$sQuery = \trim(\trim($sQuery), ' /');
-		if ('' === $sQuery) {
-			$sPath = \parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
-			$sScript = $_SERVER['SCRIPT_NAME'] ?? '';
-			if ($sScript && \str_starts_with($sPath, $sScript . '/')) {
-				$sPath = \substr($sPath, \strlen($sScript) + 1);
+		$sPath = \trim($sPath, ' /');
+
+		$sQuery = \trim($_SERVER['QUERY_STRING'] ?? '');
+		if (\str_starts_with($sPath, '.well-known/')) {
+			$sQuery = $sPath;
+		} else {
+			$iPos = \strpos($sQuery, '&');
+			if (0 < $iPos) {
+				$sQuery = \substr($sQuery, 0, $iPos);
 			}
-			$sQuery = \trim($sPath, ' /');
+			$sQuery = \trim(\trim($sQuery), ' /');
+			if ('' === $sQuery) {
+				$sQuery = $sPath;
+			}
 		}
 		$aSubQuery = $_GET['q'] ?? null;
 		if (\is_array($aSubQuery)) {
@@ -176,9 +182,15 @@ abstract class Service
 			$sAppCssMin = $bAppDebug || $oConfig->Get('debug', 'css', false) ? '' : '.min';
 
 			$sFaviconUrl = \SnappyMail\Branding::faviconUrl((string) $oConfig->Get('webmail', 'favicon_url', ''));
+			$sLegacyFaviconUrl = \SnappyMail\Branding::legacyFaviconUrl();
 
-			$sFaviconPngLink = $sFaviconUrl ?: Utils::WebStaticPath('apple-touch-icon.png');
-			$sAppleTouchLink = $sFaviconUrl ? '' : Utils::WebStaticPath('apple-touch-icon.png');
+			$sFaviconPngLink = $sFaviconUrl && 'image/svg+xml' !== \SnappyMail\Branding::imageType($sFaviconUrl)
+				? $sFaviconUrl
+				: '';
+			$sAppleTouchLink = \SnappyMail\Branding::appleTouchIconUrl();
+			if ('' === $sAppleTouchLink && !$sFaviconUrl) {
+				$sAppleTouchLink = Utils::WebStaticPath('apple-touch-icon.png');
+			}
 
 			$oActions = Api::Actions();
 
@@ -186,9 +198,10 @@ abstract class Service
 
 			$aTemplateParameters = array(
 				'{{BaseAppThemeName}}' => $sThemeName,
-				'{{BaseAppFaviconPngLinkTag}}' => $sFaviconPngLink ? '<link type="image/png" rel="shortcut icon" href="'.$sFaviconPngLink.'">' : '',
+				'{{BaseAppFaviconPngLinkTag}}' => $sFaviconPngLink ? '<link type="'.\SnappyMail\Branding::imageType($sFaviconPngLink).'" rel="shortcut icon" href="'.$sFaviconPngLink.'">' : '',
+				'{{BaseAppLegacyFaviconLinkTag}}' => $sLegacyFaviconUrl ? '<link type="'.\SnappyMail\Branding::imageType($sLegacyFaviconUrl).'" rel="shortcut icon" href="'.$sLegacyFaviconUrl.'">' : '',
 				'{{BaseAppFaviconTouchLinkTag}}' => $sAppleTouchLink ? '<link type="image/png" rel="apple-touch-icon" href="'.$sAppleTouchLink.'">' : '',
-				'{{BaseAppManifestLink}}' => Utils::WebPath() . '?/manifest',
+				'{{BaseAppManifestLink}}' => \SnappyMail\Branding::manifestUrl(),
 				'{{BaseFavIconSvg}}' => $sFaviconUrl ?: Utils::WebStaticPath('favicon.svg'),
 				'{{BaseThemeColor}}' => \SnappyMail\Branding::themeColor(),
 				'{{BaseBrandCss}}' => \SnappyMail\Branding::cssVariables(),

@@ -15,17 +15,14 @@ abstract class GnuPG
 		return GPG::isSupported() || PECL::isSupported();
 	}
 
-	private static $instance = null;
 	public static function getInstance(string $homedir) : ?PGPInterface
 	{
-		if (!static::$instance) {
-			if (GPG::isSupported()) {
-				static::$instance = new GPG($homedir);
-			}
-			else if (PECL::isSupported()) {
-				static::$instance = new PECL($homedir);
-			}
+		if (GPG::isSupported()) {
+			return new GPG($homedir);
 		}
-		return static::$instance;
+		if (PECL::isSupported()) {
+			return new PECL($homedir);
+		}
+		return null;
 	}
 }

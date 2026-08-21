@@ -40,11 +40,22 @@ ignoredKeywords = [
 	'$attachment',
 	'$replied',
 	// Others
+	'$deliverylinked',
+	'$deliveryprocessed',
+	'$deliverysuccess',
+	'$readlinked',
+	'$readprocessed',
+	'$readsuccess',
 	'$readreceipt',
 	'$notdelivered'
 ],
 
-isAllowedKeyword = value => '\\' != value[0] && !ignoredKeywords.includes(value.toLowerCase()),
+isAllowedKeyword = value => {
+	value = value.toLowerCase();
+	return '\\' != value[0]
+		&& !value.startsWith('$smcat-')
+		&& !ignoredKeywords.includes(value);
+},
 
 FolderUserStore = new class {
 	constructor() {
@@ -101,10 +112,15 @@ FolderUserStore = new class {
 
 			systemFoldersNames: () => {
 				const list = [getFolderInboxName()],
-				others = [self.sentFolder(), self.draftsFolder(), self.spamFolder(), self.trashFolder(), self.archiveFolder()];
+					others = [
+						self.sentFolder(), self.draftsFolder(), self.spamFolder(),
+						self.trashFolder(), self.archiveFolder()
+					];
 
-				self.folderList().length &&
+				if (self.folderList().length) {
+					getFolderFromCacheList('Snoozed') && list.push('Snoozed');
 					others.forEach(name => name && UNUSED_OPTION_VALUE !== name && list.push(name));
+				}
 
 				return list;
 			},

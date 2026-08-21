@@ -24,11 +24,15 @@ import Remote from 'Remote/User/Fetch';
 
 import { MimeToMessage } from 'Mime/Utils';
 
+import { CLASSIFIER_CATEGORIES, CLASSIFIER_CATEGORY_OPTIONS } from 'Classifier/Rules';
+import { AUTOMATIC_CATEGORY_FLAG, CATEGORY_FLAG_PREFIX } from 'Classifier/Categories';
+
 import { PgpUserStore } from 'Stores/User/Pgp';
 import { IdentityUserStore } from 'Stores/User/Identity';
 import { Passphrases } from 'Storage/Passphrases';
 
 const
+	categoryLabels = new Map(CLASSIFIER_CATEGORY_OPTIONS.map(item => [item.value, item.label])),
 	PreviewHTML = `<html>
 <head>
 	<meta charset="utf-8">
@@ -160,6 +164,9 @@ export class MessageModel extends AbstractModel {
 			subject: '',
 			plain: '',
 			html: '',
+			classifiedCategory: '',
+			classifiedCategoryConfidence: 0,
+			classifiedCategorySource: '',
 			dateTimestamp: 0,
 			dateTimestampSource: 0,
 
@@ -195,6 +202,9 @@ export class MessageModel extends AbstractModel {
 			linkedData: []
 		});
 
+		this.pgpDecryptPromise = null;
+		this.pgpVerifyPromise = null;
+
 		addComputablesTo(this, {
 			attachmentIconClass: () =>
 				this.encrypted() ? 'icon-lock' : FileInfo.getAttachmentsIconClass(this.attachments()),
@@ -205,10 +215,32 @@ export class MessageModel extends AbstractModel {
 				const unseenLen = this.threadUnseenLen();
 				return this.threadsLen() + (unseenLen > 0 ? '/' + unseenLen : '');
 			},
+			threadCountLabel: () => i18n('MESSAGE_LIST/THREAD_COUNT', {
+				COUNT: this.threadsLen()
+			}),
 
 			isUnseen: () => !this.flags().includes('\\seen'),
 			isFlagged: () => this.flags().includes('\\flagged'),
 			isDeleted: () => this.flags().includes('\\deleted'),
+			deliverySucceeded: () => this.flags().includes('$deliverysuccess'),
+			readSucceeded: () => this.flags().includes('$readsuccess'),
+			storedCategory: () => {
+				const flag = this.flags().map(value => value.toLowerCase()).find(value =>
+					value.startsWith(CATEGORY_FLAG_PREFIX)
+					&& CLASSIFIER_CATEGORIES.includes(value.slice(CATEGORY_FLAG_PREFIX.length))
+				),
+					category = flag ? flag.slice(CATEGORY_FLAG_PREFIX.length) : '';
+				return CLASSIFIER_CATEGORIES.includes(category) ? category : '';
+			},
+			automaticCategoryStored: () => this.flags()
+				.some(flag => flag.toLowerCase() === AUTOMATIC_CATEGORY_FLAG),
+			manualCategory: () => this.automaticCategoryStored() ? '' : this.storedCategory(),
+			category: () => this.storedCategory()
+				|| (CLASSIFIER_CATEGORIES.includes(this.classifiedCategory()) ? this.classifiedCategory() : ''),
+			categoryConfidence: () => this.manualCategory() ? 1 : this.classifiedCategoryConfidence(),
+			categorySource: () => this.manualCategory() ? 'manual'
+				: (this.automaticCategoryStored() ? 'automatic' : this.classifiedCategorySource()),
+			categoryLabel: () => categoryLabels.get(this.category()) || '',
 //			isJunk: () => this.flags().includes('$junk') && !this.flags().includes('$nonjunk'),
 //			isPhishing: () => this.flags().includes('$phishing'),
 
@@ -296,6 +328,17 @@ export class MessageModel extends AbstractModel {
 	 * @returns {boolean}
 	 */
 	revivePropertiesFromJson(json) {
+		// A duplicate full-message response must not replace a successfully decrypted
+		// browser body with the immutable message's outer PGP armor.
+		if (this.pgpDecrypted() && (
+			PgpUserStore.isEncrypted(json?.plain) || PgpUserStore.isEncrypted(json?.html)
+		)) {
+			json = { ...json };
+			delete json.plain;
+			delete json.html;
+			delete json.pgpEncrypted;
+			delete json.pgpSigned;
+		}
 		if (super.revivePropertiesFromJson(json)) {
 //			this.foundCIDs = isArray(json.FoundCIDs) ? json.FoundCIDs : [];
 //			this.attachments(AttachmentCollectionModel.reviveFromJson(json.attachments, this.foundCIDs));
@@ -448,14 +491,14 @@ export class MessageModel extends AbstractModel {
 					}
 				}
 			} else {
-				body.innerHTML = plainToHtml(
-					(this.plain()
-						? this.plain()
-							.replace(/-----BEGIN PGP (SIGNED MESSAGE-----(\r?\n[^\r\n]+)+|SIGNATURE-----[\s\S]*)/sg, '')
-							.trim()
-						: htmlToPlain(body.innerHTML || msgHtml(this).html)
-					)
-				);
+				let plain = this.plain();
+				const signed = this.pgpSigned?.();
+				if (plain && true === signed?.checked && true === signed?.success) {
+					plain = plain
+						.replace(/-----BEGIN PGP (SIGNED MESSAGE-----(\r?\n[^\r\n]+)+|SIGNATURE-----[\s\S]*)/sg, '')
+						.trim();
+				}
+				body.innerHTML = plainToHtml(plain || htmlToPlain(body.innerHTML || msgHtml(this).html));
 				this.hasImages(false);
 			}
 			body.classList.toggle('html', html);
@@ -604,7 +647,7 @@ export class MessageModel extends AbstractModel {
 
 	async decrypt() {
 		const msg = this;
-		if (msg.pgpEncrypted() && !msg.pgpDecrypted()) {
+		if ((msg.pgpEncrypted() || PgpUserStore.isEncrypted(msg.plain())) && !msg.pgpDecrypted()) {
 			return await msg.pgpDecrypt().then(()=>msg.pgpDecrypted());
 		}
 		if (msg.smimeEncrypted() && !msg.smimeDecrypted()) {
@@ -618,32 +661,63 @@ export class MessageModel extends AbstractModel {
 	}
 */
 	async pgpDecrypt() {
-		const oMessage = this,
-			data = oMessage.pgpEncrypted();
+		const oMessage = this;
+		let data = oMessage.pgpEncrypted();
+		if (!data && PgpUserStore.isEncrypted(oMessage.plain())) {
+			data = { partId: '', keyIds: [] };
+			oMessage.pgpEncrypted(data);
+		}
+		if (!data || oMessage.pgpDecrypted()) {
+			return;
+		}
+		if (oMessage.pgpDecryptPromise) {
+			return oMessage.pgpDecryptPromise;
+		}
+
 		delete data.error;
-		await PgpUserStore.decrypt(oMessage).then(result => {
-			if (!result) {
+		delete data.retryable;
+		oMessage.pgpDecryptPromise = PgpUserStore.decrypt(oMessage).then(result => {
+			if (!result?.data) {
 				// TODO: translate
 				throw Error('Decryption failed, canceled or not possible');
 			}
+			if (PgpUserStore.isEncrypted(result.data)) {
+				throw Error('Decryption returned encrypted data');
+			}
+
+			oMessage.pgpSigned(null);
+			MimeToMessage(result.data, oMessage, { preservePgpEncrypted: true });
+			if (PgpUserStore.isEncrypted(oMessage.plain()) || PgpUserStore.isEncrypted(oMessage.html())) {
+				throw Error('Decryption returned encrypted data');
+			}
+			oMessage.html() ? oMessage.viewHtml() : oMessage.viewPlain();
 			oMessage.pgpDecrypted(true);
-			if (result.data) {
-				MimeToMessage(result.data, oMessage);
-				oMessage.html() ? oMessage.viewHtml() : oMessage.viewPlain();
-				if (result.signatures?.length) {
-					oMessage.pgpSigned({
-						signatures: result.signatures,
-						success: !!result.signatures.length
-					});
+			if (result.signatures?.length) {
+				const failed = result.signatures.find(sig => 0 !== sig.status),
+					primary = result.signatures.find(sig => sig.fingerprint) || result.signatures[0];
+				oMessage.pgpSigned({
+					signatures: result.signatures,
+					fingerprint: primary?.fingerprint || primary?.keyid || '',
+					success: !failed,
+					checked: true,
+					error: failed ? 'Signature could not be verified automatically' : ''
+				});
+			} else {
+				const signed = oMessage.pgpSigned();
+				if (signed && true !== signed.checked) {
+					oMessage.pgpVerify(true);
 				}
 			}
 		})
 		.catch(e => {
 			data.error = e.message;
+			data.retryable = true === e?.openPgpTransient;
 		})
 		.finally(() => {
 			oMessage.pgpEncrypted(data);
+			oMessage.pgpDecryptPromise = null;
 		});
+		await oMessage.pgpDecryptPromise;
 	}
 
 	pgpVerify(silent) {
@@ -651,16 +725,23 @@ export class MessageModel extends AbstractModel {
 			data = oMessage.pgpSigned(),
 			status = data && 'object' === typeof data ? data : {};
 
-		if (!data || true === status.success || false === status.success) {
+		if (!data || (true === status.checked && (true === status.success || false === status.success))) {
 			return Promise.resolve(data);
 		}
+		if (oMessage.pgpVerifyPromise) {
+			return oMessage.pgpVerifyPromise;
+		}
 
-		return PgpUserStore.verify(oMessage).then(result => {
+		oMessage.pgpSigned({ ...status, checking: true });
+		oMessage.pgpVerifyPromise = PgpUserStore.verify(oMessage).then(result => {
 			if (result) {
-				oMessage.pgpSigned(result);
+				oMessage.pgpSigned({ ...result, checked: true, checking: false });
+				result.success && !oMessage.isHtml() && oMessage.viewPlain();
 				return result;
 			} else {
 				status.success = false;
+				status.checked = true;
+				status.checking = false;
 				status.error = 'Signature could not be verified automatically';
 				oMessage.pgpSigned(status);
 				silent || alert(status.error);
@@ -686,11 +767,14 @@ export class MessageModel extends AbstractModel {
 */
 		}).catch(e => {
 			status.success = false;
+			status.checked = true;
+			status.checking = false;
 			status.error = e?.message || 'Signature could not be verified automatically';
 			oMessage.pgpSigned(status);
 			silent || alert(status.error);
 			return status;
-		});
+		}).finally(() => oMessage.pgpVerifyPromise = null);
+		return oMessage.pgpVerifyPromise;
 	}
 
 	async smimeDecrypt() {
@@ -718,9 +802,9 @@ export class MessageModel extends AbstractModel {
 			}
 			await Remote.post('SMimeDecryptMessage', null, params).then(response => {
 				if (response?.Result?.data) {
-					message.smimeDecrypted(true);
-					MimeToMessage(response.Result.data, message);
+					MimeToMessage(response.Result.data, message, { preserveSmimeEncrypted: true });
 					message.html() ? message.viewHtml() : message.viewPlain();
+					message.smimeDecrypted(true);
 					pass && pass.remember && Passphrases.handle(identity, pass.password);
 					if ('signed' in response.Result) {
 						message.smimeSigned(response.Result.signed);

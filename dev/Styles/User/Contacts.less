@@ -103,6 +103,32 @@
 			width: 100%;
 		}
 
+		.favoriteContact {
+			appearance: none;
+			background: transparent;
+			border: 0;
+			color: inherit;
+			cursor: pointer;
+			flex: 0 0 34px;
+			font-size: 16px;
+			height: 45px;
+			line-height: 45px;
+			margin: 0;
+			opacity: .45;
+			padding: 0;
+			text-align: center;
+
+			&.active {
+				color: #b7791f;
+				opacity: 1;
+			}
+
+			&:focus-visible {
+				outline: 2px solid #398CF2;
+				outline-offset: -2px;
+			}
+		}
+
 		&.checked {
 			border-color: #69A8F5;
 

@@ -30,18 +30,20 @@ if (useTunnel) {
 }
 composeArgs.push('up', '-d', '--build', 'snappymail', 'db', 'docker-mailserver');
 if (useTunnel) {
-	composeArgs.push('tunnel-client');
+	composeArgs.push(
+		'tunnel-client',
+		'tunnel-client-mail-nixc-us',
+		'tunnel-client-openpgpkey-boompay-ca',
+		'tunnel-client-openpgpkey-nixc-us',
+		'tunnel-route-keepalive'
+	);
 }
 
 run('docker', composeArgs);
 
-if (useTunnel) {
-	run('docker', ['compose', '--profile', 'tunnel', 'up', '-d', '--force-recreate', 'tunnel-client']);
-}
-
 log(useTunnel
-	? 'serving at http://0.0.0.0:8888 and tunneling through https://mail.nixc.us/'
-	: 'serving at http://0.0.0.0:8888');
+	? 'serving at http://127.0.0.1:8888 and tunneling through https://mail.boompay.ca/, https://mail.nixc.us/, https://openpgpkey.boompay.ca/, and https://openpgpkey.nixc.us/'
+	: 'serving at http://127.0.0.1:8888');
 
 const watcher = spawn('node', ['scripts/watch-static.js'], {
 	cwd: root,

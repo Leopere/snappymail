@@ -1,0 +1,97 @@
+services:
+  db:
+    image: mariadb:12.3
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_USER: snappymail
+      MARIADB_PASSWORD: snappymail
+      MARIADB_DATABASE: snappymail
+    volumes:
+      - mariadb:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -uroot -p$${MARIADB_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      placement:
+        constraints:
+          - node.hostname == ingress.nixc.us
+      restart_policy:
+        condition: any
+
+  snappymail:
+    image: snappymail:production-20260726-amd64-message-view-v10
+    environment:
+      BRAND_HOST_MAP: mail.boompay.ca=boompay;mail.nixc.us=mrc
+      BRAND_ALLOW_THEMES: "0"
+      MEMORY_LIMIT: 256M
+    volumes:
+      - certs:/certs:ro
+      - app:/var/lib/snappymail
+    networks:
+      - internal
+      - traefik
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8888/ >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    deploy:
+      placement:
+        constraints:
+          - node.hostname == ingress.nixc.us
+      update_config:
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+        parallelism: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        traefik.enable: "true"
+        traefik.swarm.network: traefik
+        traefik.swarm.lbswarm: "true"
+        traefik.http.services.snappymail.loadbalancer.server.port: "8888"
+        traefik.http.routers.snappymail-boompay.rule: Host(`mail.boompay.ca`)
+        traefik.http.routers.snappymail-boompay.entrypoints: websecure
+        traefik.http.routers.snappymail-boompay.tls: "true"
+        traefik.http.routers.snappymail-boompay.tls.certresolver: letsencryptresolver
+        traefik.http.routers.snappymail-boompay.service: snappymail
+        traefik.http.routers.snappymail-mrc.rule: Host(`mail.nixc.us`)
+        traefik.http.routers.snappymail-mrc.entrypoints: websecure
+        traefik.http.routers.snappymail-mrc.tls: "true"
+        traefik.http.routers.snappymail-mrc.tls.certresolver: letsencryptresolver
+        traefik.http.routers.snappymail-mrc.service: snappymail
+        traefik.http.routers.snappymail-wkd-boompay.rule: Host(`openpgpkey.boompay.ca`) && PathPrefix(`/.well-known/openpgpkey/`)
+        traefik.http.routers.snappymail-wkd-boompay.entrypoints: websecure
+        traefik.http.routers.snappymail-wkd-boompay.tls: "true"
+        traefik.http.routers.snappymail-wkd-boompay.tls.certresolver: letsencryptresolver
+        traefik.http.routers.snappymail-wkd-boompay.service: snappymail
+        traefik.http.routers.snappymail-wkd-mrc.rule: Host(`openpgpkey.nixc.us`) && PathPrefix(`/.well-known/openpgpkey/`)
+        traefik.http.routers.snappymail-wkd-mrc.entrypoints: websecure
+        traefik.http.routers.snappymail-wkd-mrc.tls: "true"
+        traefik.http.routers.snappymail-wkd-mrc.tls.certresolver: letsencryptresolver
+        traefik.http.routers.snappymail-wkd-mrc.service: snappymail
+
+networks:
+  internal:
+    driver: overlay
+  traefik:
+    external: true
+
+volumes:
+  app:
+    name: snappymail_app
+    external: true
+  mariadb:
+    name: snappymail_mariadb
+    external: true
+  certs:
+    name: snappymail_certs
+    external: true

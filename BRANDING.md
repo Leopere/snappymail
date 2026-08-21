@@ -1,31 +1,24 @@
 # Brandable Fork Notes
 
-This fork keeps upstream SnappyMail attribution and AGPL licensing intact while adding runtime branding defaults for Motherboard Repair Canada.
+This fork keeps upstream SnappyMail attribution and AGPL licensing intact while adding host-aware runtime branding defaults for Motherboard Repair Canada and BoomPay.
 
 ## Runtime Env Vars
 
-- `BRAND_NAME`
-- `BRAND_SHORT_NAME`
-- `BRAND_DESCRIPTION`
-- `BRAND_PRIMARY_COLOR`
-- `BRAND_SECONDARY_COLOR`
-- `BRAND_THEME_COLOR`
-- `BRAND_THEME_NAME`
-- `BRAND_FAVICON_URL`
-- `BRAND_LOGO_URL`
-- `BRAND_MANIFEST_ICON_URL`
+- `BRAND_HOST_MAP`
+- `BRAND_PROFILE`
 - `BRAND_ALLOW_THEMES`
 
-If unset, the app defaults to the Motherboard Repair Canada assets committed under `snappymail/v/0.0.0/static/brand`.
-Brand env vars are intentionally authoritative over imported SnappyMail runtime config for title, loading text, favicon, manifest, color variables, and the managed theme. The default theme is `MotherboardRepairCanada`, and the user theme picker is disabled by default so the app presents one managed brand. Set `BRAND_ALLOW_THEMES=1` only when you deliberately want users to see theme controls again.
+If unset, the app maps `mail.boompay.ca` to the BoomPay profile and `mail.nixc.us` to the Motherboard Repair Canada profile. Unknown hosts fall back to MRC. Set `BRAND_HOST_MAP` as semicolon-separated `host=profile` entries, for example `mail.boompay.ca=boompay;mail.nixc.us=mrc`. Set `BRAND_PROFILE=boompay` or `BRAND_PROFILE=mrc` only when one fixed brand should override host detection.
+
+Brand profiles are intentionally authoritative over imported SnappyMail runtime config for title, loading text, favicon, manifest, color variables, and the managed theme. The user theme picker is disabled by default so each host presents one managed brand. Set `BRAND_ALLOW_THEMES=1` only when you deliberately want users to see theme controls again.
 
 ## Local Static Loop
 
-Run `npm run dev` to build once, start the local Docker stack on `0.0.0.0:8888`, and keep rebuilding static assets when source, templates, branding code, brand assets, or the managed theme change. Generated static CSS/JS output is ignored by the watcher to avoid rebuild loops.
+Run `npm run dev` to build once, start the local Docker stack on `127.0.0.1:8888`, and keep rebuilding static assets when source, templates, branding code, brand assets, or the managed theme change. Generated static CSS/JS output is ignored by the watcher to avoid rebuild loops.
 
-Run `npm run dev:tunnel` when the local stack should also register the `mail.nixc.us` reverse tunnel through `ingress.nixc.us`. Copy `.env.example` to `.env` locally and set `TUNNEL_KEY_PATH` to the private tunnel key before starting the tunnel profile. The `.env` file is ignored by git.
+Run `npm run dev:tunnel` when the local stack should also register the `mail.boompay.ca`, `mail.nixc.us`, `openpgpkey.boompay.ca`, and `openpgpkey.nixc.us` reverse tunnels through `ingress.nixc.us`. Copy `.env.example` to `.env` locally and set `TUNNEL_KEY_PATH` to the private tunnel key before starting the tunnel profile. The `.env` file is ignored by git.
 
-The test and dev scripts recreate `tunnel-client` after SnappyMail is rebuilt so the sidecar keeps sharing the current SnappyMail container network namespace.
+The test and dev helpers do not force-recreate public tunnel client sidecars. Running tunnel clients are left untouched after SnappyMail rebuilds; new tunnel hostnames are only registered when the tunnel profile is explicitly started.
 
 ## Internal GnuPG Defaults
 

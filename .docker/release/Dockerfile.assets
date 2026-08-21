@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+
+ARG BASE_IMAGE=snappymail:production-20260726-amd64-folder-pane-v3
+FROM ${BASE_IMAGE}
+
+# UI-only releases reuse the pinned, tested PHP/GnuPG runtime. `npm run build`
+# must run first so these are the exact generated assets used in development.
+COPY --chown=www-data:www-data snappymail/v/0.0.0/app/templates \
+	/snappymail/snappymail/v/2.38.2/app/templates
+COPY --chown=www-data:www-data snappymail/v/0.0.0/static/css \
+	/snappymail/snappymail/v/2.38.2/static/css
+COPY --chown=www-data:www-data snappymail/v/0.0.0/static/js \
+	/snappymail/snappymail/v/2.38.2/static/js
+
+RUN find \
+		/snappymail/snappymail/v/2.38.2/app/templates \
+		/snappymail/snappymail/v/2.38.2/static/css \
+		/snappymail/snappymail/v/2.38.2/static/js \
+		-type f -exec chmod 440 {} \;

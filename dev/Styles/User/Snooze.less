@@ -1,0 +1,49 @@
+#V-PopupsSnooze {
+	max-width: min(92vw, 420px);
+
+	.modal-body {
+		padding: 16px;
+	}
+
+	.snoozeSubject {
+		font-weight: bold;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.snoozeChoices {
+		display: grid;
+		gap: 8px;
+
+		.btn {
+			box-sizing: border-box;
+			min-height: 44px;
+			text-align: left;
+			width: 100%;
+		}
+	}
+
+	.snoozeCustom {
+		display: grid;
+		gap: 5px;
+		margin-top: 16px;
+
+		input {
+			box-sizing: border-box;
+			min-height: 44px;
+			width: 100%;
+		}
+	}
+
+	.snoozeCustomSubmit {
+		box-sizing: border-box;
+		margin-top: 8px;
+		min-height: 44px;
+		width: 100%;
+	}
+
+	.snoozeSaving {
+		text-align: center;
+	}
+}

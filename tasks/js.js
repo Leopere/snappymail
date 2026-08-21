@@ -1,5 +1,7 @@
 /* RainLoop Webmail (c) RainLoop Team | Licensed under MIT */
 const gulp = require('gulp');
+const fs = require('fs');
+const path = require('path');
 
 const concat = require('gulp-concat'),
 	gap = require('gulp-append-prepend'),
@@ -17,7 +19,13 @@ const { del } = require('./common');
 
 const { rollupJS } = require('./rollup');
 
-const jsClean = () => del(config.paths.staticJS + '/**/*.{js,map}');
+// Keep the public minified bundle available while its next version is generated.
+const jsClean = () => del([
+	config.paths.staticJS + '*.js',
+	config.paths.staticJS + '*.map'
+]);
+const jsStagePath = config.paths.staticMinJS + '.next/';
+const jsStageClean = () => del(jsStagePath);
 
 const prepend = () => gap.prependText(config.head.agpl + '\n');
 
@@ -38,7 +46,7 @@ const jsServiceWorker = () => {
 // OpenPGP
 const jsOpenPGP = () => {
 	return gulp
-		.src('vendors/openpgp-5/dist/openpgp.js')
+		.src('vendors/openpgp-6/dist/openpgp.js')
 		.pipe(gulp.dest(config.paths.staticJS));
 };
 
@@ -116,7 +124,19 @@ const jsMin = () =>
 				showTotal: false
 			})
 		)
-		.pipe(gulp.dest(config.paths.staticMinJS));
+		.pipe(gulp.dest(jsStagePath));
+
+const jsPublish = async () => {
+	const files = await fs.promises.readdir(jsStagePath);
+	files.sort((left, right) => ('boot.min.js' === left) - ('boot.min.js' === right));
+	for (const file of files) {
+		await fs.promises.rename(
+			path.join(jsStagePath, file),
+			path.join(config.paths.staticMinJS, file)
+		);
+	}
+	await fs.promises.rmdir(jsStagePath);
+};
 
 const jsLint = () =>
 	gulp
@@ -129,7 +149,9 @@ const jsLint = () =>
 exports.jsLint = jsLint;
 exports.js = gulp.series(
 	jsClean,
+	jsStageClean,
 	jsLint,
 	gulp.parallel(jsBoot, jsServiceWorker, jsOpenPGP, jsLibs, jsSieve, jsApp, jsAdmin),
-	jsMin
+	jsMin,
+	jsPublish
 );

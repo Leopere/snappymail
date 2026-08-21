@@ -175,21 +175,51 @@ export class ContactsPopupView extends AbstractViewPopup {
 		this.saveContact(this.contact());
 	}
 
-	saveContact(contact) {
+	sortContacts(contacts = ContactUserStore()) {
+		ContactUserStore(contacts.slice().sort((left, right) => Number(right.favorite()) - Number(left.favorite())));
+	}
+
+	toggleFavorite(contact, event) {
+		event?.preventDefault();
+		event?.stopPropagation();
+
+		if (!contact || contact.readOnly() || this.isBusy()) {
+			return false;
+		}
+
+		const favorite = contact.favorite();
+		contact.favorite(!favorite);
+		this.sortContacts();
+		this.saveContact(contact, () => {
+			contact.favorite(favorite);
+			this.sortContacts();
+		});
+		return false;
+	}
+
+	saveContact(contact, onError) {
+		if (!contact) {
+			return;
+		}
+
 		const data = contact.toJSON();
 		if (data.jCard != JSON.stringify(contact.jCard)) {
 			this.isSaving(true);
 			Remote.request('ContactSave',
 				(iError, oData) => {
 					if (iError) {
+						onError?.();
 						alert(oData?.message || getNotification(iError));
-					} else if (oData.Result.ResultID) {
+					} else if (oData?.Result?.ResultID) {
 						if (contact.id()) {
 							contact.id(oData.Result.ResultID);
 							contact.jCard = JSON.parse(data.jCard);
+							this.sortContacts();
 						} else {
 							this.reloadContactList(); // TODO: remove when e-contact-foreach is dynamic
 						}
+					} else {
+						onError?.();
 					}
 					this.isSaving(false);
 				}, data
@@ -257,7 +287,7 @@ export class ContactsPopupView extends AbstractViewPopup {
 
 				this.contactsCount(0 < count ? count : 0);
 
-				ContactUserStore(list);
+				this.sortContacts(list);
 
 				ContactUserStore.loading(false);
 			},

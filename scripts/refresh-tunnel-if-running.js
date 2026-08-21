@@ -11,22 +11,16 @@ const run = (command, args, options = {}) => spawnSync(command, args, {
 	...options
 });
 
-const ps = run('docker', ['compose', 'ps', '-q', 'tunnel-client']);
+const tunnelServices = [
+	'tunnel-client',
+	'tunnel-client-mail-nixc-us',
+	'tunnel-client-openpgpkey-boompay-ca',
+	'tunnel-client-openpgpkey-nixc-us'
+];
+const ps = run('docker', ['compose', 'ps', '-q', ...tunnelServices]);
 if (ps.status || !ps.stdout.trim()) {
 	process.exit(ps.status || 0);
 }
 
-console.log('[refresh-tunnel] recreating tunnel-client after snappymail restart');
-const up = run('docker', [
-	'compose',
-	'--profile',
-	'tunnel',
-	'up',
-	'-d',
-	'--force-recreate',
-	'tunnel-client'
-], {
-	stdio: 'inherit'
-});
-
-process.exit(up.status || 0);
+console.log('[refresh-tunnel] tunnel clients are already running; leaving them untouched');
+process.exit(0);

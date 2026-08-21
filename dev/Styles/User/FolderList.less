@@ -17,15 +17,6 @@
 	width: 100%;
 }
 
-/* https://github.com/the-djmaze/snappymail/issues/1427 */
-#V-MailFolderList .e-checkbox {
-	margin: 0 4px;
-	width: calc(100% - 8px);
-}
-#V-MailFolderList .unreadOnly li a:not(.unread-sub):not([data-unread]) {
-    display:none;
-}
-
 .b-folders {
 	display: flex;
 	flex-direction: column;
@@ -81,7 +72,37 @@
 	li {
 		display: block;
 		overflow: hidden;
+		position: relative;
 		white-space: nowrap;
+
+		> .folder-tree-read {
+			background: transparent;
+			border: 0;
+			color: inherit;
+			cursor: pointer;
+			font: inherit;
+			line-height: 2.2em;
+			opacity: .75;
+			padding: 0 .55em;
+			position: absolute;
+			right: 0;
+			top: 0;
+			z-index: 2;
+
+			&:hover,
+			&:focus {
+				opacity: 1;
+			}
+
+			&:disabled {
+				cursor: wait;
+				opacity: .45;
+			}
+
+			&.is-loading {
+				animation: rotation .8s infinite ease-in-out;
+			}
+		}
 
 		a {
 			background-color: transparent;
@@ -167,18 +188,11 @@
 		text-indent: 0;
 	}
 
-	.flag-icon {
-		margin-left: 7px;
-	}
-	.flag-icon::after {
-		content:'☆';
-		opacity: .5;
-	}
-	.is-flagged {
-		.flag-icon::after {
-			color: orange;
-			content:'★';
-			opacity: 1;
+	.pinnedShortcut {
+		font-weight: normal;
+
+		&.selected {
+			font-weight: bold;
 		}
 	}
 

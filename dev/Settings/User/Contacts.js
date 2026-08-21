@@ -11,11 +11,14 @@ export class UserSettingsContacts /*extends AbstractViewSettings*/ {
 		this.contactsAutosave = ko.observable(!!SettingsGet('ContactsAutosave'));
 
 		this.allowContactsSync = ContactUserStore.allowSync;
+		this.syncAuto = ContactUserStore.syncAuto;
 		this.syncMode = ContactUserStore.syncMode;
 		this.syncUrl = ContactUserStore.syncUrl;
 		this.syncUser = ContactUserStore.syncUser;
 		this.syncPass = ContactUserStore.syncPass;
 		this.syncError = ko.observable('');
+		this.syncSuccess = ko.observable('');
+		this.syncTesting = ko.observable(false);
 
 		this.syncModeOptions = koComputable(() => {
 			translateTrigger();
@@ -40,20 +43,29 @@ export class UserSettingsContacts /*extends AbstractViewSettings*/ {
 			Remote.saveSettings(null, { ContactsAutosave: value })
 		);
 
-		this.saveTrigger.subscribe(() =>
+		this.saveTrigger.subscribe(() => {
+			ContactUserStore.syncAuto(false);
+			this.syncSuccess('');
 			Remote.request('SaveContactsSyncData', null, {
 				Mode: ContactUserStore.syncMode(),
 				Url: ContactUserStore.syncUrl(),
 				User: ContactUserStore.syncUser(),
 				Password: ContactUserStore.syncPass()
-			})
-		);
+			});
+		});
 	}
 
 	test() {
 		this.syncError('');
+		this.syncSuccess('');
+		this.syncTesting(true);
 		Remote.request('TestContactsSyncData', (iError, data) => {
-			iError && this.syncError(data.messageAdditional || data.message || getErrorMessage(iError, data));
+			this.syncTesting(false);
+			if (iError) {
+				this.syncError(data?.messageAdditional || data?.message || getErrorMessage(iError, data));
+			} else {
+				this.syncSuccess(i18n('SETTINGS_CONTACTS/SYNC_TEST_SUCCESS'));
+			}
 		}, {
 			Url: ContactUserStore.syncUrl(),
 			User: ContactUserStore.syncUser(),

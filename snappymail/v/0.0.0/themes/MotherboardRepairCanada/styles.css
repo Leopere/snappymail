@@ -41,6 +41,7 @@
 :root {
 	color-scheme: light;
 	--brand-primary-color: #1A73E8;
+	--brand-primary-hover: #155FC0;
 	--brand-secondary-color: #4285F4;
 	--brand-theme-color: #1D3557;
 	--brand-slate: #457B9D;
@@ -124,14 +125,16 @@ body#rl-app {
 	background:
 		linear-gradient(135deg, rgba(29, 53, 87, 0.10), rgba(69, 123, 157, 0.05) 38%, rgba(230, 57, 70, 0.05)),
 		var(--main-bg-color);
+	font-family: var(--fontSans);
 }
 
 #rl-app {
-	font-feature-settings: "kern";
+	font-feature-settings: "kern", "cv02", "cv03", "cv04";
+	letter-spacing: 0;
 }
 
 #rl-left {
-	background: linear-gradient(180deg, var(--brand-theme-color), #13263F);
+	background: linear-gradient(180deg, var(--brand-theme-color), var(--brand-slate));
 	box-shadow: 12px 0 30px rgba(29, 53, 87, 0.16);
 }
 
@@ -139,18 +142,18 @@ body#rl-app {
 	background: url("images/logo.svg") left center / contain no-repeat;
 	content: "";
 	display: block;
-	height: 62px;
+	height: 64px;
 	margin: 16px 12px 8px;
 }
 
 #rl-left .buttonCompose,
 #V-MailMessageList .buttonCompose {
 	align-items: center;
-	background: #FFFFFF;
-	border: 1px solid rgba(255, 255, 255, 0.22);
+	background: var(--brand-primary-color);
+	border: 1px solid rgba(255, 255, 255, 0.18);
 	border-radius: 8px;
-	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
-	color: var(--brand-theme-color);
+	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+	color: #FFFFFF;
 	display: inline-flex;
 	font-weight: 700;
 	gap: 8px;
@@ -178,8 +181,8 @@ body#rl-app {
 
 #rl-left .buttonCompose:hover,
 #V-MailMessageList .buttonCompose:hover {
-	background: #F7FBFF;
-	box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+	background: var(--brand-primary-hover);
+	box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20);
 	opacity: 1;
 	transform: translateY(-1px);
 }
@@ -192,15 +195,15 @@ body#rl-app {
 
 #rl-left .buttonCompose.btn-warning,
 #V-MailMessageList .buttonCompose.btn-warning {
-	background: rgba(255, 255, 255, 0.78);
+	background: rgba(255, 255, 255, 0.82);
 	color: var(--brand-theme-color);
 }
 
 #rl-left .buttonCompose .compose-plus,
 #V-MailMessageList .buttonCompose .compose-plus {
-	color: var(--brand-primary-color);
+	color: #FFFFFF;
 	font-size: 13px;
-	font-weight: 700;
+	font-weight: 800;
 	line-height: 1;
 	margin: 0;
 	min-width: auto;
@@ -236,11 +239,11 @@ html.rl-left-panel-disabled #rl-left::before {
 }
 
 .LoginView .descWrapper {
-	background: url("images/logo.svg") center top / min(360px, 82vw) auto no-repeat;
+	background: url("images/logo.svg") center center / contain no-repeat;
 	color: var(--brand-theme-color);
 	font-size: 0;
-	height: 98px;
-	margin-bottom: 18px;
+	height: clamp(136px, 20vh, 176px);
+	margin-bottom: 16px;
 	text-shadow: none;
 }
 
@@ -279,14 +282,15 @@ html.rl-left-panel-disabled #rl-left::before {
 .LoginView .buttonLogin:focus,
 .btn.btn-success:hover,
 .btn.btn-success:focus {
-	background: #155FC0;
-	border-color: #155FC0;
+	background: var(--brand-primary-hover);
+	border-color: var(--brand-primary-hover);
 	color: #FFFFFF;
 }
 
 .btn {
 	background-image: none;
 	font-weight: 600;
+	letter-spacing: 0;
 	text-shadow: none;
 }
 

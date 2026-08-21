@@ -14,6 +14,7 @@ export class SelectComponent {
 		this.options = params.options;
 		this.optionsText = params.optionsText;
 		this.optionsValue = params.optionsValue;
+		this.enable = params.enable?.subscribe ? params.enable : ko.observable(params.enable ?? 1);
 
 		let size = 0 < params.size ? 'span' + params.size : '';
 		if (this.trigger) {

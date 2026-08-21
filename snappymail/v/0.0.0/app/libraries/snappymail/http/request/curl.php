@@ -43,6 +43,9 @@ class CURL extends \SnappyMail\HTTP\Request
 		if (\defined('CURLOPT_NOSIGNAL')) {
 			\curl_setopt($c, CURLOPT_NOSIGNAL, true);
 		}
+		if ($this->force_ipv4 && \defined('CURLOPT_IPRESOLVE') && \defined('CURL_IPRESOLVE_V4')) {
+			\curl_setopt($c, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+		}
 		if ($this->ca_bundle) {
 			\curl_setopt($c, CURLOPT_CAINFO, $this->ca_bundle);
 		}

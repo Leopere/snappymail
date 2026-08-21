@@ -1,63 +1,57 @@
 import { koComputable } from 'External/ko';
 
 import { SettingsGet } from 'Common/Globals';
-import { i18n, translateTrigger, relativeTime } from 'Common/Translator';
+import { translateTrigger, relativeTime } from 'Common/Translator';
 
 import { AbstractViewSettings } from 'Knoin/AbstractViews';
 
 import { SettingsUserStore } from 'Stores/User/Settings';
-
-import { GnuPGUserStore } from 'Stores/User/GnuPG';
+import { OpenPGPUserStore } from 'Stores/User/OpenPGP';
 
 export class UserSettingsSecurity extends AbstractViewSettings {
 	constructor() {
 		super();
 
 		this.autoLogout = SettingsUserStore.autoLogout;
+		this.autoLogoutDisabled = SettingsUserStore.autoLogoutDisabled;
+		this.autoLogoutEnabled = koComputable(() => !this.autoLogoutDisabled());
 		this.autoLogoutOptions = koComputable(() => {
 			translateTrigger();
 			return [
-				{ id: 0, name: i18n('SETTINGS_SECURITY/NEVER') },
 				{ id: 5, name: relativeTime(300) },
 				{ id: 15, name: relativeTime(900) },
 				{ id: 30, name: relativeTime(1800) },
 				{ id: 60, name: relativeTime(3600) },
 				{ id: 120, name: relativeTime(7200) },
-				{ id: 300, name: relativeTime(18000) },
-				{ id: 600, name: relativeTime(36000) }
+				{ id: 240, name: relativeTime(14400) },
+				{ id: 480, name: relativeTime(28800) },
+				{ id: 720, name: relativeTime(43200) },
+				{ id: 1440, name: relativeTime(86400) }
 			];
 		});
 		this.addSetting('AutoLogout');
+		this.addSetting('AutoLogoutDisabled');
 
-		this.keyPassForget = SettingsUserStore.keyPassForget;
-		this.addSetting('keyPassForget');
-
-			this.gnupgPrivateKeys = GnuPGUserStore.privateKeys;
-
-			this.canGnuPG = GnuPGUserStore.isSupported();
-
-			this.gnupgPrivateCount = koComputable(() => this.gnupgPrivateKeys().length);
-			this.encryptionReady = koComputable(() => !!this.gnupgPrivateCount());
-		this.encryptionEmail = koComputable(() => {
-			const key = this.gnupgPrivateKeys()[0];
-			return key?.emails?.[0] || SettingsGet('Email') || '';
-		});
-		this.encryptionStatus = koComputable(() =>
-			this.encryptionReady()
-				? 'Ready'
-				: (this.canGnuPG ? 'Setting up' : 'Unavailable')
-		);
+		this.vaultState = OpenPGPUserStore.vaultState;
+		this.encryptionEmail = koComputable(() => SettingsGet('Email') || '');
+		this.encryptionStatus = koComputable(() => ({
+			ready: 'Unlocked',
+			locked: 'Locked',
+			missing: 'Pending',
+			error: 'Unavailable',
+			unavailable: 'Unavailable'
+		}[this.vaultState()] || 'Unavailable'));
 		this.encryptionSummary = koComputable(() => {
-			const count = this.gnupgPrivateCount(),
-				email = this.encryptionEmail();
-			return this.encryptionReady()
-				? `${email}${email ? ' - ' : ''}${count} server GPG private key${1 === count ? '' : 's'}`
-				: (email || this.encryptionStatus());
+			const email = this.encryptionEmail(), state = this.vaultState();
+			if ('ready' === state || 'locked' === state) {
+				return `${email}${email ? ' - ' : ''}browser-encrypted private key vault`;
+			}
+			return email || this.encryptionStatus();
 		});
 		this.encryptionStatusClass = koComputable(() => ({
-			ready: this.encryptionReady(),
-			pending: !this.encryptionReady() && this.canGnuPG,
-				unavailable: !this.encryptionReady() && !this.canGnuPG
-			}));
-		}
+			ready: 'ready' === this.vaultState(),
+			pending: ['locked', 'missing'].includes(this.vaultState()),
+			unavailable: ['error', 'unavailable'].includes(this.vaultState())
+		}));
 	}
+}

@@ -13,6 +13,10 @@ const watchTargets = [
 	'snappymail/v/0.0.0/app/libraries/snappymail/branding.php',
 	'snappymail/v/0.0.0/static/brand',
 	'snappymail/v/0.0.0/themes/MotherboardRepairCanada',
+	'vendors/email-classifier/email-classifier-v1.worker.js',
+	'vendors/email-classifier/THIRD_PARTY_NOTICES.md',
+	'vendors/email-classifier/licenses',
+	'scripts/fetch-email-classifier-assets.cjs',
 	'gulpfile.js',
 	'package.json'
 ];

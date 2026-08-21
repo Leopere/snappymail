@@ -14,7 +14,6 @@ namespace MailSo\Mail;
 use MailSo\Base\Utils;
 use MailSo\Imap\Enumerations\FetchType;
 use MailSo\Mime\Enumerations\Header as MimeHeader;
-use SnappyMail\GPG\PGP as GPG;
 
 /**
  * @category MailSo
@@ -326,8 +325,21 @@ class Message implements \JsonSerializable
 			$gEncryptedParts = $oBodyStructure->SearchByContentType('multipart/encrypted');
 			foreach ($gEncryptedParts as $oPart) {
 				if ($oPart->isPgpEncrypted()) {
+					$oEncryptedPart = $oPart->SubParts()[1];
+					$sEncryptedPartId = $oEncryptedPart->PartID();
+					$keyIds = [];
+					$sEncryptedText = $oFetchResponse->GetFetchValue(FetchType::BODY.'['.$sEncryptedPartId.']');
+					if (null === $sEncryptedText) {
+						$sEncryptedText = $oFetchResponse->GetFetchValue(FetchType::BODY.'['.$sEncryptedPartId.']<0>');
+					}
+					if (\is_string($sEncryptedText) && \strlen($sEncryptedText)) {
+						$sEncryptedText = Utils::DecodeEncodingValue($sEncryptedText, $oEncryptedPart->ContentTransferEncoding());
+						// Recipient key ids are optional metadata. The account-scoped decrypt
+						// action resolves them when needed; parsing must never open GnuPG.
+					}
 					$oMessage->pgpEncrypted = [
-						'partId' => $oPart->SubParts()[1]->PartID()
+						'partId' => $sEncryptedPartId,
+						'keyIds' => $keyIds
 					];
 				}
 			}
@@ -414,12 +426,8 @@ class Message implements \JsonSerializable
 							];
 						}
 
-						if (\str_contains($sText, '-----BEGIN PGP MESSAGE-----')) {
+						if (\str_starts_with(\ltrim($sText), '-----BEGIN PGP MESSAGE-----')) {
 							$keyIds = [];
-							if (GPG::isSupported()) {
-								$GPG = new GPG('');
-								$keyIds = $GPG->getEncryptedMessageKeys($sText);
-							}
 							$oMessage->pgpEncrypted = [
 								'partId' => $oPart->PartID(),
 								'keyIds' => $keyIds

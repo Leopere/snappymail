@@ -18,10 +18,15 @@ trait Contacts
 				if ($this->GetCapa(Capa::CONTACTS)) {
 					$oDriver = $this->fabrica('address-book', $oAccount);
 				}
-				if ($oAccount && $oDriver) {
-					$oDriver->SetEmail($this->GetMainEmail($oAccount));
-					$oDriver->setDAVClientConfig($this->getContactsSyncData($oAccount));
+			if ($oAccount && $oDriver) {
+				$oDriver->SetEmail($this->GetMainEmail($oAccount));
+				$aDavConfig = $this->getContactsSyncData($oAccount);
+				if ($aDavConfig) {
+					$aDavConfig['Timeout'] = 4;
+					$aDavConfig['Deadline'] = 8;
 				}
+				$oDriver->setDAVClientConfig($aDavConfig);
+			}
 			} catch (\Throwable $e) {
 				\SnappyMail\LOG::error('AddressBook', $e->getMessage()."\n".$e->getTraceAsString());
 				$oDriver = null;
@@ -32,6 +37,134 @@ trait Contacts
 		}
 
 		return $this->oAddressBookProvider;
+	}
+
+	private function contactsSyncPublicData(?array $aData) : array
+	{
+		if (!$aData) {
+			$aData = [
+				'Mode' => 0,
+				'Url' => '',
+				'User' => '',
+				'Auto' => true,
+				'Disabled' => false
+			];
+		}
+
+		$aData['Mode'] = (int) ($aData['Mode'] ?? 0);
+		$aData['Url'] = (string) ($aData['Url'] ?? '');
+		$aData['User'] = (string) ($aData['User'] ?? '');
+		$aData['Auto'] = !empty($aData['Auto']);
+		$aData['Disabled'] = !empty($aData['Disabled']);
+		$aData['Password'] = empty($aData['Password']) ? '' : static::APP_DUMMY;
+		$aData['Interval'] = \max(20, \min(320, (int) $this->Config()->Get('contacts', 'sync_interval', 20)));
+		unset($aData['PasswordHMAC'], $aData['LastAttempt']);
+
+		return $aData;
+	}
+
+	private function contactsSyncDiscoveryUrls(\RainLoop\Model\Account $oAccount) : array
+	{
+		$oDomain = $oAccount->Domain();
+		$hosts = [
+			$oDomain ? $oDomain->ImapSettings()->host : '',
+			$oDomain ? $oDomain->SmtpSettings()->host : '',
+			\ltrim(\strrchr($oAccount->Email(), '@') ?: '', '@')
+		];
+		$urls = [];
+		foreach ($hosts as $host) {
+			$host = \strtolower(\trim($host, " .\t\r\n"));
+			if (!\preg_match('/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i', $host)) {
+				continue;
+			}
+			$urls['https://' . $host . '/.well-known/carddav'] = true;
+		}
+
+		return \array_keys($urls);
+	}
+
+	/**
+	 * Tries the mail domain's trusted DAV endpoints after login. The browser
+	 * never receives or resubmits the account password for this discovery.
+	 */
+	public function DoDiscoverContactsSync() : array
+	{
+		if (!$this->GetCapa(Capa::CONTACTS) || !$this->Config()->Get('contacts', 'allow_sync', false)) {
+			return $this->FalseResponse();
+		}
+
+		$oAccount = $this->getAccountFromToken();
+		if (!$oAccount) {
+			return $this->FalseResponse();
+		}
+
+		$aData = $this->getContactsSyncData($oAccount);
+		if ($aData && ((empty($aData['Auto']) || !empty($aData['Disabled']))
+			|| (!empty($aData['Mode']) && !empty($aData['Url'])))) {
+			return $this->FalseResponse();
+		}
+		if (!empty($aData['LastAttempt']) && (int) $aData['LastAttempt'] + 900 > \time()) {
+			return $this->FalseResponse();
+		}
+
+		// Mail-in-a-Box's DAV collections are named after the account address,
+		// which can differ from an IMAP login alias.
+		$sUser = $oAccount->Email() ?: $oAccount->ImapUser();
+		$sPassword = $oAccount->ImapPass();
+		if (!$sUser || !$sPassword) {
+			return $this->FalseResponse();
+		}
+
+		foreach ($this->contactsSyncDiscoveryUrls($oAccount) as $sUrl) {
+			$oDriver = $this->fabrica('address-book', $oAccount);
+			if (!$oDriver) {
+				break;
+			}
+			$oDriver->setDAVClientConfig([
+				'Mode' => 2,
+				'Auto' => true,
+				'User' => $sUser,
+					'Password' => $sPassword,
+					'Url' => $sUrl,
+					'Timeout' => 3,
+					'Deadline' => 4
+				]);
+
+			try {
+				$oClient = $oDriver->getDavClient();
+			} catch (\Throwable $e) {
+				$host = (string) \parse_url($sUrl, \PHP_URL_HOST);
+				\SnappyMail\Log::warning('DAV', 'Automatic CardDAV discovery failed for '
+					. ($host ?: 'unknown host') . ': ' . $e->getMessage());
+				$oClient = null;
+			}
+			if ($oClient) {
+				$aData = [
+					'Mode' => 2,
+					'Auto' => true,
+					'Disabled' => false,
+					'User' => $sUser,
+					'Password' => $sPassword,
+					'Url' => $oClient->currentUrl()
+				];
+				if ($this->setContactsSyncData($oAccount, $aData)) {
+					return $this->DefaultResponse($this->contactsSyncPublicData($aData));
+				}
+				return $this->FalseResponse();
+			}
+		}
+
+		$this->setContactsSyncData($oAccount, [
+			'Mode' => 0,
+			'Auto' => true,
+			'Disabled' => false,
+			'User' => '',
+			'Password' => '',
+			'Url' => '',
+			'LastAttempt' => \time()
+		]);
+
+		return $this->FalseResponse();
 	}
 
 	public function DoSaveContactsSyncData() : array
@@ -47,8 +180,11 @@ trait Contacts
 
 		$mData = $this->getContactsSyncData($oAccount);
 
+		$iMode = \intval($this->GetActionParam('Mode', '0'));
 		$bResult = $this->setContactsSyncData($oAccount, array(
-			'Mode' => \intval($this->GetActionParam('Mode', '0')),
+			'Mode' => $iMode,
+			'Auto' => false,
+			'Disabled' => 0 === $iMode,
 			'User' => $this->GetActionParam('User', ''),
 			'Password' => static::APP_DUMMY === $sPassword
 				? (isset($mData['Password']) ? $mData['Password'] : '')
@@ -72,15 +208,6 @@ trait Contacts
 			$mData = $this->getContactsSyncData($oAccount);
 			$sPassword = isset($mData['Password']) ? $mData['Password'] : '';
 		}
-		$sPasswordHMAC = null;
-		if ($sPassword) {
-			$oMainAccount = $this->getMainAccountFromToken();
-			$sPassword = \SnappyMail\Crypt::EncryptToJSON($sPassword, $oMainAccount->CryptKey());
-			if ($sPassword) {
-				$sPasswordHMAC = \hash_hmac('sha1', $sPassword, $oMainAccount->CryptKey());
-			}
-		}
-
 		$oDriver = $this->fabrica('address-book', $oAccount);
 		if (!$oDriver) {
 			throw new ClientException(\RainLoop\Notifications::ContactsSyncError, null, 'No driver');
@@ -91,7 +218,7 @@ trait Contacts
 			'User' => $this->GetActionParam('User', ''),
 			'Password' => $sPassword,
 			'Url' => $this->GetActionParam('Url', ''),
-			'PasswordHMAC' => $sPasswordHMAC
+			'Timeout' => 5
 		]);
 
 		$oClient = $oDriver->getDavClient();
@@ -250,6 +377,10 @@ trait Contacts
 			$aData['Mode'] = empty($aData['Enable']) ? 0 : 1;
 		}
 //		$oAccount = $this->getAccountFromToken();
+		$aData['Mode'] = (int) $aData['Mode'];
+		$aData['Auto'] = !empty($aData['Auto']);
+		$aData['Disabled'] = !empty($aData['Disabled']);
+		$aData['Password'] = (string) ($aData['Password'] ?? '');
 		$oMainAccount = $this->getMainAccountFromToken();
 		if ($aData['Password']) {
 			$aData['Password'] = \SnappyMail\Crypt::EncryptToJSON($aData['Password'], $oMainAccount->CryptKey());
@@ -273,10 +404,12 @@ trait Contacts
 		if (!empty($sData)) {
 			$aData = \json_decode($sData, true);
 			if ($aData) {
-				if ($aData['Password']) {
+				if (!empty($aData['Password'])) {
 					$oMainAccount = $this->getMainAccountFromToken();
 					// Verify oAccount password hasn't changed so that Password can be decrypted
-					if ($aData['PasswordHMAC'] !== \hash_hmac('sha1', $aData['Password'], $oMainAccount->CryptKey())) {
+					if (empty($aData['PasswordHMAC']) || !\hash_equals(
+						$aData['PasswordHMAC'], \hash_hmac('sha1', $aData['Password'], $oMainAccount->CryptKey())
+					)) {
 						// Failed
 						$aData['Password'] = null;
 					} else {
@@ -290,6 +423,8 @@ trait Contacts
 				if (!isset($aData['Mode'])) {
 					$aData['Mode'] = empty($aData['Enable']) ? 0 : 1;
 				}
+				$aData['Auto'] = !empty($aData['Auto']);
+				$aData['Disabled'] = !empty($aData['Disabled']);
 				return $aData;
 			}
 

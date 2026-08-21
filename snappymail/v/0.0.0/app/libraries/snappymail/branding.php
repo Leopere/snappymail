@@ -4,13 +4,39 @@ namespace SnappyMail;
 
 abstract class Branding
 {
-	private const DEFAULT_NAME = 'Motherboard Repair Canada';
-	private const DEFAULT_SHORT_NAME = 'MRC Mail';
-	private const DEFAULT_DESCRIPTION = 'Brandable webmail for Motherboard Repair Canada';
-	private const DEFAULT_PRIMARY_COLOR = '#1A73E8';
-	private const DEFAULT_SECONDARY_COLOR = '#4285F4';
-	private const DEFAULT_THEME_COLOR = '#1D3557';
-	private const DEFAULT_THEME_NAME = 'MotherboardRepairCanada';
+	private const DEFAULT_PROFILE = 'mrc';
+	private const PROFILES = array(
+		'boompay' => array(
+			'name' => 'BoomPay',
+			'shortName' => 'BoomPay Mail',
+			'description' => 'BoomPay webmail for Ontario repair businesses',
+			'primaryColor' => '#C8201E',
+			'secondaryColor' => '#1E7FD6',
+			'themeColor' => '#0E1A2B',
+			'themeName' => 'BoomPay',
+			'faviconUrl' => 'brand/boompay-favicon.svg',
+			'legacyFaviconUrl' => 'brand/boompay-favicon.ico',
+			'appleTouchIconUrl' => 'brand/boompay-apple-touch-icon.png',
+			'logoUrl' => 'brand/boompay-logo.svg',
+			'manifestIconUrl' => 'brand/boompay-logo.webp',
+			'manifestUrl' => 'brand/boompay-manifest.json',
+			'allowThemes' => false
+		),
+		'mrc' => array(
+			'name' => 'Motherboard Repair Canada',
+			'shortName' => 'MRC Mail',
+			'description' => 'Motherboard Repair Canada webmail',
+			'primaryColor' => '#1A73E8',
+			'secondaryColor' => '#4285F4',
+			'themeColor' => '#1D3557',
+			'themeName' => 'MotherboardRepairCanada',
+			'faviconUrl' => 'brand/MRC_Logo_Main_Color.svg',
+			'logoUrl' => 'brand/MRC_Logo_Main_Color.svg',
+			'manifestIconUrl' => 'brand/MRC_Logo_Main_Color.svg',
+			'manifestUrl' => 'brand/mrc-manifest.json',
+			'allowThemes' => false
+		)
+	);
 
 	private static function env(string $name, string $default = '') : string
 	{
@@ -36,9 +62,86 @@ abstract class Branding
 		return $default;
 	}
 
-	private static function color(string $name, string $default) : string
+	private static function host() : string
 	{
-		$value = static::env($name, $default);
+		$host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '';
+		$host = \strtolower(\trim((string) $host));
+		$host = \preg_replace('/:\d+$/', '', $host);
+
+		return \is_string($host) ? $host : '';
+	}
+
+	private static function hostMap() : array
+	{
+		$map = array(
+			'mail.boompay.ca' => 'boompay',
+			'boompay.ca' => 'boompay',
+			'mail.nixc.us' => 'mrc'
+		);
+		$raw = static::env('BRAND_HOST_MAP');
+		if ('' === $raw) {
+			return $map;
+		}
+
+		foreach (\preg_split('/[;\n]+/', $raw) as $entry) {
+			$entry = \trim($entry);
+			if ('' === $entry || false === \strpos($entry, '=')) {
+				continue;
+			}
+			[$host, $profile] = \array_map('trim', \explode('=', $entry, 2));
+			$host = \strtolower($host);
+			$profile = \strtolower($profile);
+			if ('' !== $host && isset(static::PROFILES[$profile])) {
+				$map[$host] = $profile;
+			}
+		}
+
+		return $map;
+	}
+
+	private static function profileName() : string
+	{
+		$forced = \strtolower(static::env('BRAND_PROFILE'));
+		if (isset(static::PROFILES[$forced])) {
+			return $forced;
+		}
+
+		$host = static::host();
+		foreach (static::hostMap() as $mappedHost => $profile) {
+			if ($host === $mappedHost || \str_ends_with($host, '.' . $mappedHost)) {
+				return $profile;
+			}
+		}
+
+		return static::DEFAULT_PROFILE;
+	}
+
+	private static function value(string $key) : string
+	{
+		$profile = static::profileName();
+		$profileEnv = 'BRAND_' . \strtoupper($profile) . '_' . \strtoupper($key);
+		if ('' !== ($value = static::env($profileEnv))) {
+			return $value;
+		}
+
+		return (string) (static::PROFILES[$profile][$key] ?? static::PROFILES[static::DEFAULT_PROFILE][$key] ?? '');
+	}
+
+	private static function boolValue(string $key) : bool
+	{
+		$profile = static::profileName();
+		$profileEnv = 'BRAND_' . \strtoupper($profile) . '_' . \strtoupper($key);
+		if ('' !== static::env($profileEnv)) {
+			return static::boolEnv($profileEnv, (bool) (static::PROFILES[$profile][$key] ?? false));
+		}
+
+		return (bool) (static::PROFILES[$profile][$key] ?? static::PROFILES[static::DEFAULT_PROFILE][$key] ?? false);
+	}
+
+	private static function colorValue(string $key) : string
+	{
+		$default = (string) (static::PROFILES[static::profileName()][$key] ?? static::PROFILES[static::DEFAULT_PROFILE][$key]);
+		$value = static::value($key);
 		return \preg_match('/^#[0-9a-f]{6}$/i', $value) ? \strtoupper($value) : $default;
 	}
 
@@ -47,54 +150,94 @@ abstract class Branding
 		return \RainLoop\Utils::WebStaticPath($path);
 	}
 
+	public static function imageType(string $url) : string
+	{
+		$path = \parse_url($url, PHP_URL_PATH);
+		$extension = \strtolower(\pathinfo(\is_string($path) ? $path : $url, PATHINFO_EXTENSION));
+		switch ($extension) {
+			case 'svg':
+				return 'image/svg+xml';
+			case 'webp':
+				return 'image/webp';
+			case 'jpg':
+			case 'jpeg':
+				return 'image/jpeg';
+			case 'ico':
+				return 'image/x-icon';
+		}
+		return 'image/png';
+	}
+
+	private static function imageSizes(string $url) : string
+	{
+		return 'image/svg+xml' === static::imageType($url) ? 'any' : '512x512';
+	}
+
 	public static function name() : string
 	{
-		return static::env('BRAND_NAME', static::DEFAULT_NAME);
+		return static::value('name');
 	}
 
 	public static function shortName() : string
 	{
-		return static::env('BRAND_SHORT_NAME', static::DEFAULT_SHORT_NAME);
+		return static::value('shortName');
 	}
 
 	public static function description() : string
 	{
-		return static::env('BRAND_DESCRIPTION', static::DEFAULT_DESCRIPTION);
+		return static::value('description');
 	}
 
 	public static function primaryColor() : string
 	{
-		return static::color('BRAND_PRIMARY_COLOR', static::DEFAULT_PRIMARY_COLOR);
+		return static::colorValue('primaryColor');
 	}
 
 	public static function secondaryColor() : string
 	{
-		return static::color('BRAND_SECONDARY_COLOR', static::DEFAULT_SECONDARY_COLOR);
+		return static::colorValue('secondaryColor');
 	}
 
 	public static function themeColor() : string
 	{
-		return static::color('BRAND_THEME_COLOR', static::DEFAULT_THEME_COLOR);
+		return static::colorValue('themeColor');
 	}
 
 	public static function themeName() : string
 	{
-		return static::env('BRAND_THEME_NAME', static::DEFAULT_THEME_NAME);
+		return static::value('themeName');
 	}
 
 	public static function faviconUrl(string $configured = '') : string
 	{
-		return static::env('BRAND_FAVICON_URL', static::staticPath('brand/boot-logo.svg'));
+		return static::staticPath(static::value('faviconUrl'));
+	}
+
+	public static function legacyFaviconUrl() : string
+	{
+		$path = static::value('legacyFaviconUrl');
+		return '' === $path ? '' : static::staticPath($path);
+	}
+
+	public static function appleTouchIconUrl() : string
+	{
+		$path = static::value('appleTouchIconUrl');
+		return '' === $path ? '' : static::staticPath($path);
 	}
 
 	public static function logoUrl() : string
 	{
-		return static::env('BRAND_LOGO_URL', static::staticPath('brand/MRC_Logo_Main_Color.svg'));
+		return static::staticPath(static::value('logoUrl'));
 	}
 
 	public static function manifestIconUrl() : string
 	{
-		return static::env('BRAND_MANIFEST_ICON_URL', static::staticPath('brand/boot-logo-512.png'));
+		return static::staticPath(static::value('manifestIconUrl'));
+	}
+
+	public static function manifestUrl() : string
+	{
+		return static::staticPath(static::value('manifestUrl'));
 	}
 
 	public static function title(string $configured = '') : string
@@ -109,7 +252,16 @@ abstract class Branding
 
 	public static function allowThemes(bool $configured = false) : bool
 	{
-		return static::boolEnv('BRAND_ALLOW_THEMES', false);
+		return static::boolValue('allowThemes');
+	}
+
+	public static function notomoSiteId() : string
+	{
+		return array(
+			'boompay.ca' => 'boompay.ca',
+			'mail.boompay.ca' => 'boompay.ca',
+			'mail.nixc.us' => 'nixc.us'
+		)[static::host()] ?? '';
 	}
 
 	public static function data(string $configuredFavicon = '') : array
@@ -124,7 +276,8 @@ abstract class Branding
 			'themeName' => static::themeName(),
 			'faviconUrl' => static::faviconUrl($configuredFavicon),
 			'logoUrl' => static::logoUrl(),
-			'manifestIconUrl' => static::manifestIconUrl()
+			'manifestIconUrl' => static::manifestIconUrl(),
+			'notomoSiteId' => static::notomoSiteId()
 		);
 	}
 
@@ -156,8 +309,8 @@ abstract class Branding
 				),
 				array(
 					'src' => $icon,
-					'sizes' => '512x512',
-					'type' => 'image/png',
+					'sizes' => static::imageSizes($icon),
+					'type' => static::imageType($icon),
 					'purpose' => 'any maskable'
 				)
 			),

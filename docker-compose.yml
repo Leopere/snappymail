@@ -89,13 +89,12 @@ services:
           update-ca-certificates
           exec supervisord -c /etc/supervisor/supervisord.conf
 
-  # Snappymail: http://localhost:8888
-  # Admin panel: http://localhost:8888/?admin
   # Get the Admin Panel password: docker exec -it $( docker-compose ps -q snappymail ) cat /var/lib/snappymail/_data_/_default_/admin_password.txt
   snappymail:
     build:
       dockerfile: ./.docker/release/Dockerfile
       context: .
+    restart: unless-stopped
     environment:
       - BRAND_NAME=${BRAND_NAME:-}
       - BRAND_SHORT_NAME=${BRAND_SHORT_NAME:-}
@@ -107,14 +106,15 @@ services:
       - BRAND_FAVICON_URL=${BRAND_FAVICON_URL:-}
       - BRAND_LOGO_URL=${BRAND_LOGO_URL:-}
       - BRAND_MANIFEST_ICON_URL=${BRAND_MANIFEST_ICON_URL:-}
+      - BRAND_MANIFEST_URL=${BRAND_MANIFEST_URL:-}
+      - BRAND_HOST_MAP=${BRAND_HOST_MAP:-mail.boompay.ca=boompay;mail.nixc.us=mrc}
       - BRAND_ALLOW_THEMES=${BRAND_ALLOW_THEMES:-0}
+      - MEMORY_LIMIT=${SNAPPYMAIL_MEMORY_LIMIT:-256M}
     volumes:
       - certs:/certs:ro
       - ./snappymail:/snappymail/snappymail:ro
       - ./index.php:/snappymail/index.php:ro
       - snappymail:/var/lib/snappymail
-    ports:
-      - 8888:8888
     networks:
       - default
     depends_on:
@@ -140,17 +140,102 @@ services:
       - tunnel
     environment:
       TUNNEL_SERVER: ${TUNNEL_SERVER:-ingress.nixc.us:2222}
-      TUNNEL_DOMAIN: ${TUNNEL_DOMAIN:-mail.nixc.us}
+      TUNNEL_DOMAIN: ${TUNNEL_DOMAIN:-mail.boompay.ca}
+      TUNNEL_HOST: snappymail
       TUNNEL_PORT: ${TUNNEL_PORT:-8888}
+      TUNNEL_BACKEND_TLS: ${TUNNEL_BACKEND_TLS:-plain}
       TUNNEL_KEY: /keys/client_key
       TUNNEL_AUTH_USER: ${TUNNEL_AUTH_USER:-}
       TUNNEL_AUTH_PASS: ${TUNNEL_AUTH_PASS:-}
-      TUNNEL_LABELS: ${TUNNEL_LABELS:-}
+      TUNNEL_LABELS: ${TUNNEL_LABELS:-traefik.http.routers.{router}.tls.options=tunnel-http1@file}
     volumes:
       - ${TUNNEL_KEY_PATH:-/tmp/tunnel-key-missing}:/keys/client_key:ro
     depends_on:
       - snappymail
-    network_mode: service:snappymail
+
+  tunnel-client-mail-nixc-us:
+    image: ${TUNNEL_CLIENT_IMAGE:-git.nixc.us/colin/better-argo-tunnels:client-production-arm64}
+    restart: unless-stopped
+    profiles:
+      - tunnel
+    environment:
+      TUNNEL_SERVER: ${TUNNEL_SERVER:-ingress.nixc.us:2222}
+      TUNNEL_DOMAIN: ${TUNNEL_DOMAIN_LEGACY:-mail.nixc.us}
+      TUNNEL_HOST: snappymail
+      TUNNEL_PORT: ${TUNNEL_PORT:-8888}
+      TUNNEL_BACKEND_TLS: ${TUNNEL_BACKEND_TLS:-plain}
+      TUNNEL_KEY: /keys/client_key
+      TUNNEL_AUTH_USER: ${TUNNEL_AUTH_USER:-}
+      TUNNEL_AUTH_PASS: ${TUNNEL_AUTH_PASS:-}
+      TUNNEL_LABELS: ${TUNNEL_LABELS:-traefik.http.routers.{router}.tls.options=tunnel-http1@file}
+    volumes:
+      - ${TUNNEL_KEY_PATH:-/tmp/tunnel-key-missing}:/keys/client_key:ro
+    depends_on:
+      - snappymail
+
+  tunnel-client-openpgpkey-boompay-ca:
+    image: ${TUNNEL_CLIENT_IMAGE:-git.nixc.us/colin/better-argo-tunnels:client-production-arm64}
+    restart: unless-stopped
+    profiles:
+      - tunnel
+    environment:
+      TUNNEL_SERVER: ${TUNNEL_SERVER:-ingress.nixc.us:2222}
+      TUNNEL_DOMAIN: ${TUNNEL_DOMAIN_WKD:-openpgpkey.boompay.ca}
+      TUNNEL_HOST: snappymail
+      TUNNEL_PORT: ${TUNNEL_PORT:-8888}
+      TUNNEL_BACKEND_TLS: ${TUNNEL_BACKEND_TLS:-plain}
+      TUNNEL_KEY: /keys/client_key
+      TUNNEL_AUTH_USER: ${TUNNEL_AUTH_USER:-}
+      TUNNEL_AUTH_PASS: ${TUNNEL_AUTH_PASS:-}
+      TUNNEL_LABELS: ${TUNNEL_LABELS:-traefik.http.routers.{router}.tls.options=tunnel-http1@file}
+    volumes:
+      - ${TUNNEL_KEY_PATH:-/tmp/tunnel-key-missing}:/keys/client_key:ro
+    depends_on:
+      - snappymail
+
+  tunnel-client-openpgpkey-nixc-us:
+    image: ${TUNNEL_CLIENT_IMAGE:-git.nixc.us/colin/better-argo-tunnels:client-production-arm64}
+    restart: unless-stopped
+    profiles:
+      - tunnel
+    environment:
+      TUNNEL_SERVER: ${TUNNEL_SERVER:-ingress.nixc.us:2222}
+      TUNNEL_DOMAIN: ${TUNNEL_DOMAIN_WKD_NIXC:-openpgpkey.nixc.us}
+      TUNNEL_HOST: snappymail
+      TUNNEL_PORT: ${TUNNEL_PORT:-8888}
+      TUNNEL_BACKEND_TLS: ${TUNNEL_BACKEND_TLS:-plain}
+      TUNNEL_KEY: /keys/client_key
+      TUNNEL_AUTH_USER: ${TUNNEL_AUTH_USER:-}
+      TUNNEL_AUTH_PASS: ${TUNNEL_AUTH_PASS:-}
+      TUNNEL_LABELS: ${TUNNEL_LABELS:-traefik.http.routers.{router}.tls.options=tunnel-http1@file}
+    volumes:
+      - ${TUNNEL_KEY_PATH:-/tmp/tunnel-key-missing}:/keys/client_key:ro
+    depends_on:
+      - snappymail
+
+  tunnel-route-keepalive:
+    image: curlimages/curl:8.12.1
+    restart: unless-stopped
+    profiles:
+      - tunnel
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        while :; do
+          for host in \
+            mail.boompay.ca \
+            mail.nixc.us \
+            openpgpkey.boompay.ca \
+            openpgpkey.nixc.us
+          do
+            curl --fail --silent --max-time 2 --output /dev/null "https://$$host/?/Ping/0/" || true
+          done
+          sleep 2
+        done
+    depends_on:
+      - snappymail
 
   # MariaDB database
   db:

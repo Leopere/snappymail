@@ -139,7 +139,7 @@ trait UserAuth
 	/**
 	 * @throws \RainLoop\Exceptions\ClientException
 	 */
-	public function LoginProcess(string $sEmail, SensitiveString $oPassword, bool $bMainAccount = true): Account
+	public function LoginProcess(string $sEmail, SensitiveString $oPassword, bool $bMainAccount = true, ?int $iTimeout = null): Account
 	{
 		$aCredentials = $this->resolveLoginCredentials($sEmail, $oPassword);
 
@@ -169,12 +169,14 @@ trait UserAuth
 			throw $oException;
 		}
 
-		$this->imapConnect($oAccount, true);
+		$this->imapConnect($oAccount, true, null, $iTimeout);
 		if ($bMainAccount) {
 			$this->StorageProvider()->Put($oAccount, StorageType::SESSION, Utils::GetSessionToken(), 'true');
 
 			// Must be here due to bug #1241
 			$this->SetMainAuthAccount($oAccount);
+				// OpenPGP private keys are created and unlocked exclusively in the browser.
+				// The mail-login password must never bootstrap or unlock a server GnuPG key.
 			$this->Plugins()->RunHook('login.success', array($oAccount));
 
 			$this->SetAuthToken($oAccount);
@@ -210,7 +212,7 @@ trait UserAuth
 				// Test the login
 				$oImapClient = new \MailSo\Imap\ImapClient;
 				$oImapClient->SetLogger($this->Logger());
-				$this->imapConnect($oAccount, false, $oImapClient);
+					$this->imapConnect($oAccount, false, $oImapClient, 8);
 			}
 			$this->SetAdditionalAuthToken($oAccount);
 			return true;
@@ -365,6 +367,10 @@ trait UserAuth
 		$this->ClearSignMeData();
 		$uuid = \SnappyMail\UUID::generate();
 		$data = \SnappyMail\Crypt::Encrypt($oAccount, 'signme');
+		if (!$this->StorageProvider()->Put($oAccount, StorageType::SIGN_ME, $uuid, $data[2])) {
+			\SnappyMail\Log::warning(self::AUTH_SIGN_ME_TOKEN_KEY, 'Unable to persist remember-me token');
+			return;
+		}
 		Cookies::set(
 			self::AUTH_SIGN_ME_TOKEN_KEY,
 			\SnappyMail\Crypt::EncryptUrlSafe([
@@ -375,7 +381,6 @@ trait UserAuth
 			], 'signme'),
 			\time() + 3600 * 24 * 30 // 30 days
 		);
-		$this->StorageProvider()->Put($oAccount, StorageType::SIGN_ME, $uuid, $data[2]);
 	}
 
 	public function GetAccountFromSignMeToken(): ?MainAccount
@@ -442,13 +447,18 @@ trait UserAuth
 	/**
 	 * @throws \RainLoop\Exceptions\ClientException
 	 */
-	protected function imapConnect(Account $oAccount, bool $bAuthLog = false, ?\MailSo\Imap\ImapClient $oImapClient = null): void
+	protected function imapConnect(
+		Account $oAccount,
+		bool $bAuthLog = false,
+		?\MailSo\Imap\ImapClient $oImapClient = null,
+		?int $iTimeout = null
+	): void
 	{
 		try {
 			if (!$oImapClient) {
 				$oImapClient = $this->ImapClient();
 			}
-			$oAccount->ImapConnectAndLogin($this->Plugins(), $oImapClient, $this->Config());
+			$oAccount->ImapConnectAndLogin($this->Plugins(), $oImapClient, $this->Config(), $iTimeout);
 		} catch (ClientException $oException) {
 			throw $oException;
 		} catch (\MailSo\Net\Exceptions\ConnectionException $oException) {

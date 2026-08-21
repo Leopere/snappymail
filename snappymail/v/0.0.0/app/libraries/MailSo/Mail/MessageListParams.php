@@ -13,11 +13,14 @@ namespace MailSo\Mail;
 
 class MessageListParams
 {
+	public const THREAD_ALGORITHMS = ['REFS', 'REFERENCES', 'ORDEREDSUBJECT'];
+
 	public string
 		$sFolderName,
 		$sSearch = '',
 		$sSort = '',
-		$sThreadAlgorithm = '';
+		$sDeliveryReceiptSentFolder = '',
+		$sThreadAlgorithm = 'REFS';
 
 	public ?\MailSo\Cache\CacheClient
 		$oCacher = null;
@@ -26,6 +29,7 @@ class MessageListParams
 		$bUseSort = true,
 		$bUseThreads = false,
 		$bHideDeleted = true,
+		$bHideDeliveryReceipts = false,
 		$bSearchFuzzy = false;
 
 	protected int
@@ -54,6 +58,24 @@ class MessageListParams
 //		999 < $oParams->iLimit
 	}
 
+	public static function normalizeThreadAlgorithm($value) : string
+	{
+		$value = \strtoupper(\trim(\is_string($value) ? $value : ''));
+		return \in_array($value, self::THREAD_ALGORITHMS, true) ? $value : 'REFS';
+	}
+
+	public static function resolveThreadAlgorithm($value, array $capabilities) : string
+	{
+		$capabilities = \array_map('strtoupper', $capabilities);
+		$requested = self::normalizeThreadAlgorithm($value);
+		foreach (\array_unique([$requested, ...self::THREAD_ALGORITHMS]) as $algorithm) {
+			if (\in_array("THREAD={$algorithm}", $capabilities, true)) {
+				return $algorithm;
+			}
+		}
+		return '';
+	}
+
 	public function hash() : string
 	{
 		return \md5(\implode('-', [
@@ -61,6 +83,7 @@ class MessageListParams
 			$this->iOffset,
 			$this->iLimit,
 			$this->bHideDeleted ? '1' : '0',
+			$this->bHideDeliveryReceipts ? '1' : '0',
 			$this->sSearch,
 			$this->bSearchFuzzy ? '1' : '0',
 			$this->bUseSort ? $this->sSort : '0',

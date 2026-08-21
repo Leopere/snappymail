@@ -67,8 +67,9 @@ const
 			case FolderType.Sent:
 			case FolderType.Drafts:
 			case FolderType.Trash:
-			case FolderType.Archive:
 				return i18n('FOLDER_LIST/' + getKeyByValue(FolderType, type).toUpperCase() + '_NAME');
+			case FolderType.Archive:
+				return i18n('GLOBAL/DONE');
 			case FolderType.Junk:
 				return i18n('GLOBAL/SPAM');
 			// no default
@@ -453,7 +454,10 @@ export class FolderModel extends AbstractModel {
 
 			localName: () => {
 				let name = this.name();
-				if (this.isSystemFolder()) {
+				if ('Snoozed' === this.fullName) {
+					translateTrigger();
+					name = i18n('SNOOZE/FOLDER_NAME');
+				} else if (this.isSystemFolder()) {
 					translateTrigger();
 					name = getSystemFolderName(this.type(), name);
 				}
@@ -476,6 +480,9 @@ export class FolderModel extends AbstractModel {
 			detailedName: () => this.name() + ' ' + this.nameInfo(),
 
 			icon: () => {
+				if ('Snoozed' === this.fullName) {
+					return '◷';
+				}
 				switch (this.type())
 				{
 					case 1: return '📥'; // FolderType.Inbox
@@ -483,7 +490,7 @@ export class FolderModel extends AbstractModel {
 					case 3: return '🗎'; // FolderType.Drafts
 					case 4: return '⚠'; // FolderType.Junk
 					case 5: return '🗑'; // FolderType.Trash
-					case 6: return '🗄'; // FolderType.Archive
+					case 6: return '✓'; // FolderType.Archive / Done
 				}
 				return null;
 			},

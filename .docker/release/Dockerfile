@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM alpine:3.18.5 AS builder
+FROM alpine:3.18.5@sha256:34871e7290500828b39e22294660bee86d966bc0017544e848dd9a255cdf59e0 AS builder
 RUN apk add --no-cache php82 php82-json php-phar php-zip
 RUN apk add --no-cache npm
 RUN npm install -g gulp yarn
@@ -23,12 +23,14 @@ RUN set -eux; \
     rm -v /snappymail/README.md /snappymail/_include.php
 
 # Inspired by the original Rainloop dockerfile from youtous on GitLab
-FROM php:8.2-fpm-alpine AS final
+FROM php:8.2-fpm-alpine3.24@sha256:41ddda74d95c43518c3e4414e6c1c99f9c062d397f0c7a2d8cadf8d1f035d196 AS final
 
 LABEL org.label-schema.description="SnappyMail webmail client image using nginx, php-fpm on Alpine"
 
-# Install dependencies such as nginx
-RUN apk add --no-cache ca-certificates nginx supervisor bash
+# Refresh the pinned Alpine runtime and enforce the patched c-ares floor.
+RUN set -eux; \
+    apk upgrade --no-cache; \
+    apk add --no-cache 'c-ares>=1.34.8-r0' ca-certificates nginx supervisor bash
 
 # Install PHP extensions
 # apcu
@@ -170,6 +172,9 @@ COPY --chown=www-data:www-data --from=builder /snappymail /snappymail
 RUN mv -v /snappymail/data /var/lib/snappymail;
 # Setup configs
 COPY --chown=root:root .docker/release/files /
+# Ship the private integration as a managed local plugin. The entrypoint copies
+# it into the persistent SnappyMail plugin directory without exposing secrets.
+COPY --chown=root:root plugins/rocksign /opt/snappymail-plugins/rocksign
 RUN set -eux; \
     chown www-data:www-data /snappymail/include.php; \
     chmod 440 /snappymail/include.php; \

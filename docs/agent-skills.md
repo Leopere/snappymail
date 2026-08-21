@@ -2,8 +2,8 @@
 
 This repository carries repo-local Codex skills under `.codex/skills/` for behavior that future agents should not rediscover from scratch.
 
-## OpenPGP WKD GnuPG
+## OpenPGP WKD And Browser Vault
 
-Use `.codex/skills/openpgp-wkd-gnupg/SKILL.md` when changing OpenPGP WKD discovery, server-side GnuPG automation, automatic internal signing/encryption, Mail-in-a-Box GnuPG provisioning, or static WKD publication.
+Use `.codex/skills/openpgp-wkd-gnupg/SKILL.md` when changing OpenPGP WKD discovery, hashed public-key publication, browser-vault lifecycle, or public WKD routing. Use `.codex/skills/snappymail-send-encryption-contract/SKILL.md` for compose/send behavior and `.codex/skills/snappymail-decrypt-status-truth/SKILL.md` for decrypt, verify, and forwarding behavior.
 
-The skill documents the implementation map, operational commands, and the rule that WKD is the standards-compatible public key discovery surface. The detailed implementation note is `docs/openpgp-wkd.md`.
+WKD is the standards-compatible public key discovery surface; private keys and OpenPGP operations remain in the browser vault. The detailed notes are `docs/openpgp-wkd.md`, `docs/openpgp-browser-vault.md`, and `docs/openpgp-verification.md`. An OpenPGP change is not complete until `npm run verify:openpgp` passes.

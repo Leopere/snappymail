@@ -32,6 +32,8 @@ import { SettingsGet } from 'Common/Globals';
 import { SUB_QUERY_PREFIX } from 'Common/Links';
 import { AppUserStore } from 'Stores/User/App';
 
+import { classifyMessagePage } from 'Classifier/EmailClassifier';
+
 import { baseCollator } from 'Common/Translator';
 
 const
@@ -43,6 +45,9 @@ const
 		rl.route.on();
 	},
 	disableAutoSelect = ko.observable(false).extend({ falseTimeout: 500 });
+
+let categoryRouteReloadTimer = 0;
+const categoryRouteFolders = new Set;
 
 export const MessagelistUserStore = ko.observableArray().extend({ debounce: 0 });
 
@@ -62,16 +67,38 @@ addObservablesTo(MessagelistUserStore, {
 	loading: false,
 	// Happens when message(s) removed from list
 	isIncomplete: false,
+	mutationLoading: false,
 
 	selectedMessage: null,
-	focusedMessage: null
+	focusedMessage: null,
+
+	allSelected: false,
+	allSelectionLoading: false,
+	allSelectionError: '',
+	allSelectionCount: 0,
+	allSelectionViewCount: 0,
+	allSelectionUids: null
 });
+
+MessagelistUserStore.clearAllSelection = (clearMessages = false) => {
+	MessagelistUserStore.allSelectionLoading() && Remote.abort('MessageListUids');
+	MessagelistUserStore.allSelected(false);
+	MessagelistUserStore.allSelectionLoading(false);
+	MessagelistUserStore.allSelectionError('');
+	MessagelistUserStore.allSelectionCount(0);
+	MessagelistUserStore.allSelectionViewCount(0);
+	MessagelistUserStore.allSelectionUids(null);
+
+	clearMessages && MessagelistUserStore.forEach(message => message.checked(false));
+};
 
 // Computed Observables
 
 addComputablesTo(MessagelistUserStore, {
 	isLoading: () => {
-		const value = MessagelistUserStore.loading() | MessagelistUserStore.isIncomplete();
+		const value = MessagelistUserStore.loading()
+			|| MessagelistUserStore.isIncomplete()
+			|| MessagelistUserStore.mutationLoading();
 		$htmlCL.toggle('list-loading', value);
 		return value;
 	},
@@ -112,15 +139,27 @@ addComputablesTo(MessagelistUserStore, {
 		return checked.length ? checked : (selectedMessage ? [selectedMessage] : []);
 	},
 
+	selectedCount: () =>
+		MessagelistUserStore.allSelected()
+			? MessagelistUserStore.allSelectionViewCount()
+			: MessagelistUserStore.listCheckedOrSelected().length,
+
 	listCheckedOrSelectedUidsWithSubMails: () => {
 		let result = new Set;
-		MessagelistUserStore.listCheckedOrSelected().forEach(message => {
-			result.add(message.uid);
-			result.folder = message.folder;
-			if (1 < message.threadsLen()) {
-				message.threads().forEach(result.add, result);
-			}
-		});
+		if (MessagelistUserStore.allSelected()) {
+			(MessagelistUserStore.allSelectionUids() || []).forEach(result.add, result);
+			result.folder = FolderUserStore.currentFolderFullName();
+			result.allSelected = true;
+			result.viewCount = MessagelistUserStore.allSelectionViewCount();
+		} else {
+			MessagelistUserStore.listCheckedOrSelected().forEach(message => {
+				result.add(message.uid);
+				result.folder = message.folder;
+				if (1 < message.threadsLen()) {
+					message.threads().forEach(result.add, result);
+				}
+			});
+		}
 		return result;
 	}
 });
@@ -132,22 +171,30 @@ MessagelistUserStore.listChecked = koComputable(
 // Also used by Selector
 MessagelistUserStore.hasChecked = koComputable(
 	// Issue: not all are observed?
-	() => !!MessagelistUserStore.find(isChecked)
+	() => MessagelistUserStore.allSelected() || !!MessagelistUserStore.find(isChecked)
 ).extend({ rateLimit: 0 });
 
 MessagelistUserStore.hasCheckedOrSelected = koComputable(() =>
-	!!MessagelistUserStore.selectedMessage()
+	MessagelistUserStore.allSelected()
+	|| !!MessagelistUserStore.selectedMessage()
 	// Issue: not all are observed?
-	| !!MessagelistUserStore.find(isChecked)
+	|| !!MessagelistUserStore.find(isChecked)
 ).extend({ rateLimit: 50 });
 
 MessagelistUserStore.hasCheckedOrSelectedAndDeleted = koComputable(
-	() => !!MessagelistUserStore.listCheckedOrSelected().find(isDeleted)
+	() => !MessagelistUserStore.allSelected() && !!MessagelistUserStore.listCheckedOrSelected().find(isDeleted)
 ).extend({ rateLimit: 50 });
 
 MessagelistUserStore.hasCheckedOrSelectedAndUndeleted = koComputable(
-	() => !!MessagelistUserStore.listCheckedOrSelected().find(item => !item?.isDeleted())
+	() => MessagelistUserStore.allSelected()
+		|| !!MessagelistUserStore.listCheckedOrSelected().find(item => !item?.isDeleted())
 ).extend({ rateLimit: 50 });
+
+MessagelistUserStore.listChecked.subscribe(items => {
+	if (MessagelistUserStore.allSelected() && items.length < MessagelistUserStore().length) {
+		MessagelistUserStore.clearAllSelection();
+	}
+});
 
 MessagelistUserStore.notifyNewMessages = (folder, newMessages) => {
 	if (getFolderInboxName() === folder && arrayLength(newMessages)) {
@@ -190,6 +237,8 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
 	let iOffset = (MessagelistUserStore.page() - 1) * SettingsUserStore.messagesPerPage(),
 		folderName = FolderUserStore.currentFolderFullName();
 //		folderName = FolderUserStore.currentFolder() ? self.currentFolder().fullName : '');
+
+	MessagelistUserStore.clearAllSelection();
 
 	if (bDropCurrentFolderCache) {
 		setFolderETag(folderName, '');
@@ -307,6 +356,7 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
 					}
 
 					MessagelistUserStore(collection);
+					classifyMessagePage(collection);
 					MessagelistUserStore.isIncomplete(false);
 				} else {
 					MessagelistUserStore.count(0);
@@ -334,9 +384,104 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
 	Remote.abort('MessageList', 'reload').request('MessageList',
 		fCallback,
 		params,
-		60000, // 60 seconds before aborting
+		10000,
 		sGetAdd
 	);
+};
+
+addEventListener('mailbox.message.category-routed', event => {
+	const { fromFolder, message, toFolder } = event.detail || {},
+		opened = MessageUserStore.message();
+	setFolderETag(fromFolder, '');
+	setFolderETag(toFolder, '');
+	categoryRouteFolders.add(fromFolder).add(toFolder);
+	if (opened && opened.folder === fromFolder && opened.uid === message?.uid) {
+		MessageUserStore.message(null);
+		MessagelistUserStore.selectedMessage(null);
+	}
+	clearTimeout(categoryRouteReloadTimer);
+	categoryRouteReloadTimer = setTimeout(() => {
+		categoryRouteFolders.has(FolderUserStore.currentFolderFullName())
+			&& MessagelistUserStore.reload(false, true);
+		categoryRouteFolders.clear();
+	}, 150);
+});
+
+MessagelistUserStore.selectAllInView = () => {
+	const folderName = FolderUserStore.currentFolderFullName();
+	if (!folderName || MessagelistUserStore.allSelected() || MessagelistUserStore.allSelectionLoading()) {
+		return;
+	}
+
+	MessagelistUserStore.allSelectionLoading(true);
+	MessagelistUserStore.allSelectionError('');
+
+	const params = {
+		folder: folderName,
+		sort: FolderUserStore.sortMode(),
+		search: MessagelistUserStore.listSearch()
+	};
+
+	if (AppUserStore.threadsAllowed() && SettingsUserStore.useThreads()) {
+		params.useThreads = 1;
+		params.threadAlgorithm = SettingsUserStore.threadAlgorithm();
+		params.threadUid = MessagelistUserStore.threadUid();
+	} else {
+		params.threadUid = 0;
+	}
+
+	Remote.abort('MessageListUids').request('MessageListUids', (iError, data) => {
+		MessagelistUserStore.allSelectionLoading(false);
+
+		if (iError) {
+			MessagelistUserStore.allSelectionError(getNotification(iError));
+			return;
+		}
+
+		const
+			result = data?.Result || {},
+			uids = (result.uids || [])
+				.map(uid => parseInt(uid, 10))
+				.validUnique();
+
+		MessagelistUserStore.allSelectionUids(uids);
+		MessagelistUserStore.allSelectionCount(uids.length);
+		MessagelistUserStore.allSelectionViewCount(Math.max(0, parseInt(result.count, 10) || uids.length));
+		MessagelistUserStore.allSelected(!!uids.length);
+
+		if (uids.length) {
+			const selectedUids = new Set(uids);
+			MessagelistUserStore.forEach(message => message.checked(selectedUids.has(message.uid)));
+		}
+	}, params, 10000);
+};
+
+MessagelistUserStore.setAllSeen = (folderName, threadUids = []) => {
+	const folder = getFolderFromCacheList(folderName);
+	if (!folder || MessagelistUserStore.mutationLoading()) {
+		return;
+	}
+
+	MessagelistUserStore.mutationLoading(true);
+	Remote.request('MessageSetSeenToAll', error => {
+		MessagelistUserStore.mutationLoading(false);
+		if (error) {
+			setFolderETag(folderName, '');
+			MessagelistUserStore.reload(false, true);
+			alert(getNotification(error));
+			return;
+		}
+
+		if (!threadUids.length) {
+			folder.unreadEmails(0);
+		}
+		MessagelistUserStore.clearAllSelection(true);
+		MessagelistUserStore.reload(false, true);
+	}, {
+		folder: folderName,
+		setAction: 1,
+		threadUids: threadUids.join(',')
+	});
 };
 
 /**
@@ -345,61 +490,109 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
  * @param {Array=} messages = null
  */
 MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
-	messages = messages || MessagelistUserStore.listChecked();
+	if (MessagelistUserStore.mutationLoading()) {
+		return;
+	}
+	const
+		allSelected = MessagelistUserStore.allSelected(),
+		allSelectionUids = allSelected ? (MessagelistUserStore.allSelectionUids() || []) : null,
+		allSelectionUidSet = allSelectionUids ? new Set(allSelectionUids) : null;
+
+	if (allSelected
+		&& MessageSetAction.SetSeen === iSetAction
+		&& !MessagelistUserStore.listSearch()
+		&& !MessagelistUserStore.threadUid()
+	) {
+		MessagelistUserStore.setAllSeen(sFolderFullName);
+		return;
+	}
+
+	const
+		complete = iError => {
+			if (iError) {
+				setFolderETag(sFolderFullName, '');
+				MessagelistUserStore.isIncomplete(false);
+				MessagelistUserStore.reload(false, true);
+				alert(getNotification(iError));
+			} else if (allSelected) {
+				MessagelistUserStore.clearAllSelection();
+				MessagelistUserStore.reload(false, true);
+			}
+			MessagelistUserStore.mutationLoading(false);
+		};
+
+	messages = allSelected
+		? MessagelistUserStore.filter(message => allSelectionUidSet.has(message.uid))
+		: (messages || MessagelistUserStore.listChecked());
 
 	let folder,
-		rootUids = [],
-		length;
+		rootUids = allSelectionUids ? allSelectionUids.slice() : [],
+		length,
+		unreadDelta = 0;
+
+	const conversationUids = message => {
+		const uids = [message.uid, ...message.threads()].validUnique();
+		allSelected || rootUids.push(...uids);
+		return uids;
+	};
 
 	if (iSetAction == MessageSetAction.SetSeen) {
 		messages.forEach(oMessage => {
-			if (oMessage.isUnseen() && rootUids.push(oMessage.uid)) {
-				oMessage.flags.push('\\seen');
-				if (oMessage.threads().length > 0 && oMessage.threadUnseen().includes(oMessage.uid)) {
-					oMessage.threadUnseen.remove(oMessage.uid);
-				}
+			const unseen = new Set(oMessage.threadUnseen());
+			oMessage.isUnseen() && unseen.add(oMessage.uid);
+			if (unseen.size) {
+				conversationUids(oMessage);
+				unreadDelta -= unseen.size;
+				oMessage.isUnseen() && oMessage.flags.push('\\seen');
+				oMessage.threadUnseen.removeAll();
 			}
 		});
 	} else if (iSetAction == MessageSetAction.UnsetSeen) {
 		messages.forEach(oMessage => {
-			if (!oMessage.isUnseen() && rootUids.push(oMessage.uid)) {
+			const uids = conversationUids(oMessage),
+				unseen = new Set(oMessage.threadUnseen());
+			oMessage.isUnseen() && unseen.add(oMessage.uid);
+			if (unseen.size < uids.length) {
+				unreadDelta += uids.length - unseen.size;
 				oMessage.flags.remove('\\seen');
-				if (oMessage.threads().length > 0 && !oMessage.threadUnseen().includes(oMessage.uid)) {
-					oMessage.threadUnseen.push(oMessage.uid);
-				}
+				oMessage.threadUnseen(uids);
 			}
 		});
 	} else if (iSetAction == MessageSetAction.SetFlag) {
-		messages.forEach(oMessage =>
-			!oMessage.isFlagged() && rootUids.push(oMessage.uid) && oMessage.flags.push('\\flagged')
-		);
+		messages.forEach(oMessage => {
+			conversationUids(oMessage);
+			oMessage.isFlagged() || oMessage.flags.push('\\flagged');
+		});
 	} else if (iSetAction == MessageSetAction.UnsetFlag) {
-		messages.forEach(oMessage =>
-			oMessage.isFlagged() && rootUids.push(oMessage.uid) && oMessage.flags.remove('\\flagged')
-		);
+		messages.forEach(oMessage => {
+			conversationUids(oMessage);
+			oMessage.flags.remove('\\flagged');
+		});
 	} else if (iSetAction == MessageSetAction.SetDeleted) {
-		messages.forEach(oMessage =>
-			!oMessage.isDeleted() && rootUids.push(oMessage.uid) && oMessage.flags.push('\\deleted')
-		);
+		messages.forEach(oMessage => {
+			conversationUids(oMessage);
+			oMessage.isDeleted() || oMessage.flags.push('\\deleted');
+		});
 	} else if (iSetAction == MessageSetAction.UnsetDeleted) {
-		messages.forEach(oMessage =>
-			oMessage.isDeleted() && rootUids.push(oMessage.uid) && oMessage.flags.remove('\\deleted')
-		);
+		messages.forEach(oMessage => {
+			conversationUids(oMessage);
+			oMessage.flags.remove('\\deleted');
+		});
 	}
 	rootUids = rootUids.validUnique();
 	length = rootUids.length;
 
 	if (sFolderFullName && length) {
+		MessagelistUserStore.mutationLoading(true);
 		switch (iSetAction) {
-			case MessageSetAction.SetSeen:
-				length = -length;
+		case MessageSetAction.SetSeen:
 				// fallthrough is intentionally
 			case MessageSetAction.UnsetSeen:
 				folder = getFolderFromCacheList(sFolderFullName);
-				if (folder) {
-					folder.unreadEmails(Math.max(0, folder.unreadEmails() + length));
+				if (folder && !allSelected) {
+					folder.unreadEmails(Math.max(0, folder.unreadEmails() + unreadDelta));
 				}
-				Remote.request('MessageSetSeen', null, {
+				Remote.request('MessageSetSeen', complete, {
 					folder: sFolderFullName,
 					uids: rootUids.join(','),
 					setAction: iSetAction == MessageSetAction.SetSeen ? 1 : 0
@@ -408,7 +601,7 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 
 			case MessageSetAction.SetFlag:
 			case MessageSetAction.UnsetFlag:
-				Remote.request('MessageSetFlagged', null, {
+				Remote.request('MessageSetFlagged', complete, {
 					folder: sFolderFullName,
 					uids: rootUids.join(','),
 					setAction: iSetAction == MessageSetAction.SetFlag ? 1 : 0
@@ -417,13 +610,15 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 
 			case MessageSetAction.SetDeleted:
 			case MessageSetAction.UnsetDeleted:
-				Remote.request('MessageSetDeleted', null, {
+				Remote.request('MessageSetDeleted', complete, {
 					folder: sFolderFullName,
 					uids: rootUids.join(','),
 					setAction: iSetAction == MessageSetAction.SetDeleted ? 1 : 0
 				});
 				break;
-			// no default
+			default:
+				MessagelistUserStore.mutationLoading(false);
+				break;
 		}
 	}
 };
@@ -439,13 +634,15 @@ MessagelistUserStore.moveMessages = (
 ) => {
 	const fromFolder = getFolderFromCacheList(fromFolderFullName);
 
-	if (!fromFolder || !oUids?.size) return;
+	if (!fromFolder || !oUids?.size || MessagelistUserStore.mutationLoading()) return;
 
 	let unseenCount = 0,
 		setPage = 0,
 		currentMessage = MessageUserStore.message();
 
 	const toFolder = toFolderFullName ? getFolderFromCacheList(toFolderFullName) : null,
+		allSelected = !!oUids.allSelected,
+		listRemoveCount = allSelected ? (oUids.viewCount || MessagelistUserStore.count()) : oUids.size,
 		trashFolder = FolderUserStore.trashFolder(),
 		spamFolder = FolderUserStore.spamFolder(),
 		page = MessagelistUserStore.page(),
@@ -456,6 +653,8 @@ MessagelistUserStore.moveMessages = (
 		moveOrDeleteResponseHelper = (iError, oData) => {
 			if (iError) {
 				setFolderETag(FolderUserStore.currentFolderFullName(), '');
+				MessagelistUserStore.isIncomplete(false);
+				MessagelistUserStore.reload(false, true);
 				alert(getNotification(iError));
 			} else if (FolderUserStore.currentFolder()) {
 				if (2 === arrayLength(oData.Result)) {
@@ -464,7 +663,8 @@ MessagelistUserStore.moveMessages = (
 					setFolderETag(FolderUserStore.currentFolderFullName(), '');
 				}
 
-				MessagelistUserStore.count(MessagelistUserStore.count() - oUids.size);
+				allSelected && MessagelistUserStore.clearAllSelection();
+				MessagelistUserStore.count(MessagelistUserStore.count() - listRemoveCount);
 				if (page > MessagelistUserStore.pageCount()) {
 					setPage = MessagelistUserStore.pageCount();
 				}
@@ -482,7 +682,23 @@ MessagelistUserStore.moveMessages = (
 
 				MessagelistUserStore.reload(!MessagelistUserStore.count());
 			}
+			MessagelistUserStore.mutationLoading(false);
+		},
+		copyResponseHelper = iError => {
+			if (iError) {
+				setFolderETag(FolderUserStore.currentFolderFullName(), '');
+				MessagelistUserStore.reload(false, true);
+				alert(getNotification(iError));
+			} else if (allSelected) {
+				MessagelistUserStore.clearAllSelection(true);
+			}
+			MessagelistUserStore.mutationLoading(false);
 		};
+
+	if (toFolderFullName && (!toFolder || fromFolderFullName === toFolderFullName)) {
+		return;
+	}
+	MessagelistUserStore.mutationLoading(true);
 
 	messages.forEach(item => item?.isUnseen() && ++unseenCount);
 
@@ -538,7 +754,7 @@ MessagelistUserStore.moveMessages = (
 				uids: [...oUids].join(',')
 			};
 			if (copy) {
-				Remote.request('MessageCopy', null, params);
+				Remote.request('MessageCopy', copyResponseHelper, params);
 			} else {
 				const
 					isSpam = spamFolder === toFolderFullName,

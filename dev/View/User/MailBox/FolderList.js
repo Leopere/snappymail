@@ -3,8 +3,8 @@ import ko from 'ko';
 import { ScopeFolderList, ScopeMessageList } from 'Common/Enums';
 import { addShortcut, leftPanelDisabled, stopEvent } from 'Common/Globals';
 import { mailBox, settings } from 'Common/Links';
-//import { setFolderETag } from 'Common/Cache';
 import { addComputablesTo } from 'External/ko';
+import { getNotification, i18n } from 'Common/Translator';
 
 import { AppUserStore } from 'Stores/User/App';
 import { SettingsUserStore } from 'Stores/User/Settings';
@@ -22,6 +22,11 @@ import { ComposePopupView } from 'View/Popup/Compose';
 
 import { setExpandedFolder, foldersFilter } from 'Model/FolderCollection';
 import { ThemeStore } from '../../../Stores/Theme';
+import Remote from 'Remote/User/Fetch';
+
+const isInboxView = folder => folder.isInbox()
+	|| 'Snoozed' === folder.fullName
+	|| FolderUserStore.archiveFolder() === folder.fullName;
 
 export class MailFolderList extends AbstractViewLeft {
 	constructor() {
@@ -31,22 +36,31 @@ export class MailFolderList extends AbstractViewLeft {
 
 		this.composeInEdit = ComposePopupView.inEdit;
 
-		this.systemFolders = FolderUserStore.systemFolders;
-
 		this.moveAction = moveAction;
 
 		this.allowContacts = AppUserStore.allowContacts();
 
 		this.foldersFilter = foldersFilter;
+		this.markSubfoldersReadLabel = i18n('FOLDER_LIST/MARK_SUBFOLDERS_READ');
 
-		this.filterUnseen = ko.observable(false);
+		this.markingFolderTree = ko.observable('');
 
 		addComputablesTo(this, {
 			foldersFilterVisible: () => 20 < FolderUserStore.folderList().CountRec,
 
+			inboxFolders: () => FolderUserStore.systemFolders().filter(isInboxView),
+
+			mailFolders: () => FolderUserStore.systemFolders().filter(folder => !isInboxView(folder)),
+
 			folderListVisible: () => {
-				let result = FolderUserStore.folderList().visible();
-				return 1 === result.length && result[0].isInbox() ? result[0].visibleSubfolders() : result;
+				const result = [],
+					systemNames = new Set(FolderUserStore.systemFoldersNames());
+				FolderUserStore.folderList().visible().forEach(folder => {
+					result.push(...(systemNames.has(folder.fullName)
+						? folder.visibleSubfolders()
+						: [folder]));
+				});
+				return result;
 			}
 		});
 	}
@@ -56,6 +70,8 @@ export class MailFolderList extends AbstractViewLeft {
 			eqs = (ev, s) => ev.target.closestWithin(s, dom);
 
 		this.oContentScrollable = qs('.b-content');
+		this.collapseSmartOnMobile();
+		FolderUserStore.folderList.subscribe(() => this.collapseSmartOnMobile());
 
 		dom.addEventListener('click', event => {
 			let el = eqs(event, '.e-collapsed-sign');
@@ -96,7 +112,7 @@ export class MailFolderList extends AbstractViewLeft {
 						}
 */
 						let search = '';
-						if (event.target.matches('.flag-icon') && !folder.isFlagged()) {
+						if (el.matches('.pinnedShortcut') && !folder.isFlagged()) {
 							search = 'flagged';
 						} else if (folder.unreadCount() && event.clientX > el.getBoundingClientRect().right - 25) {
 							search = 'unseen';
@@ -166,6 +182,17 @@ export class MailFolderList extends AbstractViewLeft {
 		});
 	}
 
+	collapseSmartOnMobile() {
+		if (!ThemeStore.isMobile()) {
+			return;
+		}
+		const smart = this.folderListVisible().find(folder => 'smart' === folder.name().toLowerCase());
+		if (smart) {
+			smart.collapsed(true);
+			setExpandedFolder(smart.fullName, false);
+		}
+	}
+
 	scrollToFocused() {
 		const scrollable = this.oContentScrollable;
 		if (scrollable) {
@@ -185,6 +212,50 @@ export class MailFolderList extends AbstractViewLeft {
 
 	composeClick() {
 		showMessageComposer();
+	}
+
+	markFolderTreeRead(folder, event) {
+		stopEvent(event);
+		if (!folder || this.markingFolderTree()) {
+			return;
+		}
+
+		const targets = [];
+		const collectUnread = item => {
+			if (item.canBeSelected?.() && 0 < item.unreadEmails()) {
+				targets.push(item);
+			}
+			item.subFolders?.().forEach(collectUnread);
+		};
+		collectUnread(folder);
+		if (!targets.length) {
+			return;
+		}
+
+		this.markingFolderTree(folder.fullName);
+		Promise.all(targets.map(target => new Promise(resolve => {
+			Remote.request('MessageSetSeenToAll', error => resolve({ error, target }), {
+				folder: target.fullName,
+				setAction: 1,
+				threadUids: ''
+			});
+		}))).then(results => {
+			const failed = results.filter(result => result.error),
+				currentFolder = FolderUserStore.currentFolderFullName();
+			results.forEach(result => result.error || result.target.unreadEmails(0));
+			this.markingFolderTree('');
+
+			if (results.some(result => !result.error && result.target.fullName === currentFolder)) {
+				MessagelistUserStore.clearAllSelection(true);
+				MessagelistUserStore.reload(false, true);
+			}
+			if (failed.length) {
+				const detail = getNotification(failed[0].error);
+				alert(i18n('FOLDER_LIST/MARK_SUBFOLDERS_READ_FAILED', {
+					COUNT: failed.length
+				}) + (detail ? '\n' + detail : ''));
+			}
+		});
 	}
 
 	clearFolderSearch() {

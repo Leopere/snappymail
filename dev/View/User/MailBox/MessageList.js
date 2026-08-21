@@ -7,7 +7,7 @@ import { ComposeType, FolderType, MessageSetAction } from 'Common/EnumsUser';
 import { doc,
 	leftPanelDisabled, toggleLeftPanel,
 	Settings, SettingsCapa,
-	addEventsListeners, stopEvent,
+	addEventsListeners, stopEvent, fireEvent,
 	addShortcut, registerShortcut, formFieldFocused
 } from 'Common/Globals';
 import { arrayLength } from 'Common/Utils';
@@ -22,7 +22,7 @@ import { i18n } from 'Common/Translator';
 
 import { dropFilesInFolder } from 'Common/Folders';
 
-import { getFolderFromCacheList } from 'Common/Cache';
+import { getFolderInboxName } from 'Common/Cache';
 
 import { AppUserStore } from 'Stores/User/App';
 import { SettingsUserStore } from 'Stores/User/Settings';
@@ -31,8 +31,6 @@ import { LanguageStore } from 'Stores/Language';
 import { MessageUserStore } from 'Stores/User/Message';
 import { MessagelistUserStore } from 'Stores/User/Messagelist';
 import { ThemeStore } from 'Stores/Theme';
-
-import Remote from 'Remote/User/Fetch';
 
 import { decorateKoCommands, showScreenPopup, arePopupsVisible } from 'Knoin/Knoin';
 import { AbstractViewRight } from 'Knoin/AbstractViews';
@@ -46,8 +44,42 @@ import { MessageModel } from 'Model/Message';
 import { LayoutSideView, ClientSideKeyNameMessageListSize } from 'Common/EnumsUser';
 import { setLayoutResizer } from 'Common/UtilsUser';
 
+export const classifyMessageSwipe = (distance, width) => {
+	const
+		magnitude = Math.abs(distance),
+		shortThreshold = Math.min(72, width * 0.22),
+		longThreshold = Math.min(200, width * 0.55);
+
+	if (magnitude < shortThreshold) {
+		return '';
+	}
+	if (0 < distance) {
+		return magnitude >= longThreshold ? 'snooze' : 'archive';
+	}
+	return magnitude >= longThreshold ? 'spam' : 'delete';
+};
+
+export const classifyMessageSwipeIntent = (horizontalDistance, verticalDistance) => {
+	const startSlop = 18;
+	if (startSlop <= verticalDistance && horizontalDistance <= verticalDistance) {
+		return 'vertical';
+	}
+	return startSlop <= horizontalDistance && horizontalDistance >= verticalDistance * 1.5
+		? 'horizontal'
+		: '';
+};
+
+export const projectMessageSwipe = (distance, direction) =>
+	direction * Math.max(0, distance * direction - 18);
+
 const
-	canBeMovedHelper = () => MessagelistUserStore.hasCheckedOrSelected(),
+	canBeMovedHelper = () => MessagelistUserStore.hasCheckedOrSelected()
+		&& !MessagelistUserStore.allSelectionLoading()
+		&& !MessagelistUserStore.mutationLoading(),
+	canUseMessageObjectsHelper = () => canBeMovedHelper()
+		&& !MessagelistUserStore.allSelected(),
+	currentFolderLabel = () => FolderUserStore.currentFolder()?.localName?.()
+		|| FolderUserStore.currentFolderFullName(),
 
 	/**
 	 * @param {string} sFolderFullName
@@ -112,9 +144,15 @@ export class MailMessageList extends AbstractViewRight {
 		this.userUsageProc = FolderUserStore.quotaPercentage;
 
 		this.hideDeleted = SettingsUserStore.hideDeleted;
+		this.smartArchiveEnabled = SettingsUserStore.smartArchiveEnabled;
+		this.deliveryReceiptLabel = i18n('MESSAGE_LIST/DELIVERY_RECEIPT_RECEIVED');
+		this.readReceiptLabel = i18n('MESSAGE_LIST/READ_RECEIPT_RECEIVED');
+		this.pendingSwipeAction = null;
 
 		addObservablesTo(this, {
-			focusSearch: false
+			focusSearch: false,
+			swipeUndoVisible: false,
+			swipeUndoText: ''
 		});
 
 		// append drag and drop
@@ -125,7 +163,6 @@ export class MailMessageList extends AbstractViewRight {
 		this.attachmentsActions = ko.observableArray(arrayLength(attachmentsActions) ? attachmentsActions : []);
 
 		addComputablesTo(this, {
-
 			sortSupported: () => FolderUserStore.hasCapability('SORT') && !MessagelistUserStore.threadUid(),
 
 			messageListSearchDesc: () => {
@@ -136,9 +173,13 @@ export class MailMessageList extends AbstractViewRight {
 			messageListPaginator: computedPaginatorHelper(MessagelistUserStore.page, MessagelistUserStore.pageCount),
 
 			checkAll: {
-				read: () => MessagelistUserStore.hasChecked(),
+				read: () => {
+					const length = MessagelistUserStore().length;
+					return !!length && MessagelistUserStore.listChecked().length === length;
+				},
 				write: (value) => {
 					value = !!value;
+					MessagelistUserStore.clearAllSelection();
 					MessagelistUserStore.forEach(message => message.checked(value));
 				}
 			},
@@ -150,8 +191,37 @@ export class MailMessageList extends AbstractViewRight {
 
 			isIncompleteChecked: () => {
 				const c = MessagelistUserStore.listChecked().length;
-				return c && MessagelistUserStore().length > c;
+				return !MessagelistUserStore.allSelected() && c && MessagelistUserStore().length > c;
 			},
+
+			selectAllInViewVisible: () => {
+				const
+					length = MessagelistUserStore().length,
+					checked = MessagelistUserStore.listChecked().length;
+				return !MessagelistUserStore.allSelected()
+					&& !MessagelistUserStore.allSelectionLoading()
+					&& length
+					&& checked === length
+					&& MessagelistUserStore.count() > length;
+			},
+
+			pageSelectionText: () => i18n('MESSAGE_LIST/PAGE_SELECTED', {
+				COUNT: MessagelistUserStore.listChecked().length
+			}, 'All %COUNT% messages on this page are selected.'),
+
+			selectAllInViewText: () => i18n('MESSAGE_LIST/SELECT_ALL_IN_VIEW', {
+				COUNT: MessagelistUserStore.count(),
+				FOLDER: currentFolderLabel()
+			}, 'Select all %COUNT% messages in %FOLDER%'),
+
+			allSelectionText: () => i18n('MESSAGE_LIST/ALL_SELECTED', {
+				COUNT: MessagelistUserStore.selectedCount(),
+				FOLDER: currentFolderLabel()
+			}, 'All %COUNT% messages in %FOLDER% are selected.'),
+
+			selectingAllText: () => i18n('MESSAGE_LIST/SELECTING_ALL', null, 'Selecting all messages...'),
+
+			clearSelectionText: () => i18n('MESSAGE_LIST/CLEAR_SELECTION', null, 'Clear selection'),
 
 			listGrouped: () => {
 				let uid = MessagelistUserStore.threadUid(),
@@ -267,6 +337,11 @@ export class MailMessageList extends AbstractViewRight {
 				}
 			} else if (el.closest('.threads-len')) {
 				this.gotoThread(currentMessage);
+			} else if (el.closest('.messageCheckbox')) {
+				// Selector toggles the checkbox after this callback.
+			} else if (ThemeStore.isMobile() && MessagelistUserStore.hasChecked()
+				&& currentMessage) {
+				currentMessage.checked(!currentMessage.checked());
 			} else {
 				return 1;
 			}
@@ -329,12 +404,12 @@ export class MailMessageList extends AbstractViewRight {
 		).throttle(50));
 
 		decorateKoCommands(this, {
-			downloadAttachCommand: canBeMovedHelper,
-			downloadZipCommand: canBeMovedHelper,
-			forwardCommand: canBeMovedHelper,
+			downloadAttachCommand: canUseMessageObjectsHelper,
+			downloadZipCommand: canUseMessageObjectsHelper,
+			forwardCommand: canUseMessageObjectsHelper,
 			deleteWithoutMoveCommand: canBeMovedHelper,
-			deleteCommand: () => MessagelistUserStore.hasCheckedOrSelectedAndUndeleted(),
-			undeleteCommand: () => MessagelistUserStore.hasCheckedOrSelectedAndDeleted(),
+			deleteCommand: () => canBeMovedHelper() && MessagelistUserStore.hasCheckedOrSelectedAndUndeleted(),
+			undeleteCommand: () => canBeMovedHelper() && MessagelistUserStore.hasCheckedOrSelectedAndDeleted(),
 			archiveCommand: canBeMovedHelper,
 			spamCommand: canBeMovedHelper,
 			notSpamCommand: canBeMovedHelper,
@@ -362,6 +437,121 @@ export class MailMessageList extends AbstractViewRight {
 	clear() {
 		SettingsCapa('DangerousActions')
 		&& showScreenPopup(FolderClearPopupView, [FolderUserStore.currentFolder()]);
+	}
+
+	selectAllInView() {
+		MessagelistUserStore.selectAllInView();
+	}
+
+	clearSelection() {
+		MessagelistUserStore.clearAllSelection(true);
+	}
+
+	messageUidsWithSubMails(message) {
+		const uids = new Set;
+		if (message) {
+			uids.add(message.uid);
+			1 < message.threadsLen() && message.threads().forEach(uids.add, uids);
+			uids.folder = message.folder;
+		}
+		return uids;
+	}
+
+	moveMessageToFolderType(message, folderType) {
+		const uids = this.messageUidsWithSubMails(message);
+		uids.size && rl.app.moveMessagesToFolderType(folderType, uids.folder, uids);
+	}
+
+	queueMessageMove(message, row, folderType, text, setDeleted = false, permanentDelete = false) {
+		this.commitPendingSwipeAction();
+		const action = {
+			folderType: folderType,
+			message: message,
+			permanentDelete: permanentDelete,
+			row: row,
+			setDeleted: setDeleted
+		};
+		row?.classList.add('swipe-pending');
+		this.pendingSwipeAction = action;
+		this.swipeUndoText(text);
+		this.swipeUndoVisible(true);
+		action.timer = setTimeout(() => this.commitPendingSwipeAction(), 5000);
+	}
+
+	commitPendingSwipeAction() {
+		const action = this.pendingSwipeAction;
+		if (!action) {
+			return;
+		}
+		clearTimeout(action.timer);
+		this.pendingSwipeAction = null;
+		this.swipeUndoVisible(false);
+		const move = attempts => {
+			if (!MessagelistUserStore.mutationLoading()) {
+				if (action.setDeleted) {
+					action.row?.classList.remove('swipe-pending');
+					listAction(action.message.folder, MessageSetAction.SetDeleted, [action.message]);
+				} else if (action.permanentDelete) {
+					const uids = this.messageUidsWithSubMails(action.message);
+					uids.size && MessagelistUserStore.moveMessages(uids.folder, uids);
+				} else {
+					this.moveMessageToFolderType(action.message, action.folderType);
+				}
+			} else if (attempts) {
+				setTimeout(() => move(attempts - 1), 250);
+			} else {
+				action.row?.classList.remove('swipe-pending');
+				MessagelistUserStore.reload(false, true);
+			}
+		};
+		move(40);
+	}
+
+	undoSwipeAction() {
+		const action = this.pendingSwipeAction;
+		if (!action) {
+			return;
+		}
+		clearTimeout(action.timer);
+		action.row?.classList.remove('swipe-pending');
+		this.pendingSwipeAction = null;
+		this.swipeUndoVisible(false);
+	}
+
+	archiveMessage(message, row) {
+		this.archiveAllowed() && this.queueMessageMove(
+			message, row, FolderType.Archive, i18n('MESSAGE_LIST/DONE_PENDING')
+		);
+	}
+
+	spamMessage(message, row) {
+		this.canMarkAsSpam() && this.queueMessageMove(
+			message, row, FolderType.Junk, i18n('MESSAGE_LIST/SPAM_PENDING')
+		);
+	}
+
+	deleteMessage(message, row) {
+		if (!message) {
+			return;
+		}
+		const
+			trashFolder = FolderUserStore.trashFolder(),
+			setDeleted = UNUSED_OPTION_VALUE === trashFolder,
+			permanentDelete = !setDeleted && [trashFolder, FolderUserStore.spamFolder()].includes(message.folder);
+		this.queueMessageMove(
+			message, row, setDeleted ? 0 : FolderType.Trash,
+			i18n('MESSAGE_LIST/DELETE_PENDING'), setDeleted, permanentDelete
+		);
+	}
+
+	snoozeMessage(message) {
+		const uids = this.messageUidsWithSubMails(message);
+		message && fireEvent('mailbox.message.snooze-request', {
+			folder: message.folder,
+			message: message,
+			uid: message.uid,
+			uids: [...uids]
+		});
 	}
 
 	reload() {
@@ -495,37 +685,12 @@ export class MailMessageList extends AbstractViewRight {
 	}
 
 	listSetAllSeen() {
-		let sFolderFullName = FolderUserStore.currentFolderFullName(),
-			iThreadUid = MessagelistUserStore.endThreadUid();
-		if (sFolderFullName) {
-			let cnt = 0;
-			const uids = [];
-
-			let folder = getFolderFromCacheList(sFolderFullName);
-			if (folder) {
-				MessagelistUserStore.forEach(message => {
-					if (message.isUnseen()) {
-						++cnt;
-					}
-
-					message.flags.push('\\seen');
-//					message.flags.valueHasMutated();
-					iThreadUid && uids.push(message.uid);
-				});
-
-				if (iThreadUid) {
-					folder.unreadEmails(Math.max(0, folder.unreadEmails() - cnt));
-				} else {
-					folder.unreadEmails(0);
-				}
-
-				Remote.request('MessageSetSeenToAll', null, {
-					folder: sFolderFullName,
-					setAction: 1,
-					threadUids: uids.join(',')
-				});
-			}
-		}
+		const
+			folderName = FolderUserStore.currentFolderFullName(),
+			threadUid = MessagelistUserStore.endThreadUid();
+		MessagelistUserStore.setAllSeen(folderName, threadUid
+			? MessagelistUserStore.map(message => message.uid)
+			: []);
 	}
 
 	listUnsetSeen() {
@@ -554,9 +719,9 @@ export class MailMessageList extends AbstractViewRight {
 
 	seenMessagesFast(seen) {
 		const checked = MessagelistUserStore.listCheckedOrSelected();
-		if (checked.length) {
+		if (checked.length || MessagelistUserStore.allSelected()) {
 			listAction(
-				checked[0].folder,
+				checked[0]?.folder || FolderUserStore.currentFolderFullName(),
 				seen ? MessageSetAction.SetSeen : MessageSetAction.UnsetSeen,
 				checked
 			);
@@ -615,6 +780,178 @@ export class MailMessageList extends AbstractViewRight {
 
 		this.selector.init(b_content, ScopeMessageList);
 
+		let gesture,
+			suppressClickUntil = 0;
+		const
+			interactiveSelector = 'a,button,input,select,textarea,[contenteditable],[role="button"],'
+				+ '.messageCheckbox,.flagParent,.threads-len',
+			unlockSwipeScroll = () => b_content.classList.remove('swipe-locked'),
+			resetSwipeRow = row => {
+				if (!row) {
+					return;
+				}
+				row.classList.remove('swipe-active');
+				row.style.removeProperty('--message-swipe-x');
+				row.style.removeProperty('--message-swipe-height');
+				row.style.removeProperty('--message-swipe-width');
+				delete row.dataset.swipeAction;
+				delete row.dataset.swipeDirection;
+			},
+			cancelGesture = reset => {
+				if (!gesture) {
+					return;
+				}
+				clearTimeout(gesture.longPressTimer);
+				const { pointerId, row } = gesture;
+				row.hasPointerCapture?.(pointerId) && row.releasePointerCapture(pointerId);
+				unlockSwipeScroll();
+				reset && resetSwipeRow(row);
+				gesture = null;
+			},
+			keepSwipeScrollLocked = event => {
+				if (gesture?.horizontal) {
+					event?.cancelable && event.preventDefault();
+					b_content.scrollTop !== gesture.scrollTop
+						&& (b_content.scrollTop = gesture.scrollTop);
+				}
+			},
+			previewAction = (row, distance, width) => {
+				if (distance) {
+					row.dataset.swipeDirection = 0 < distance ? 'right' : 'left';
+				} else {
+					delete row.dataset.swipeDirection;
+				}
+				let action = classifyMessageSwipe(distance, width);
+				if ('spam' === action && !this.canMarkAsSpam()) {
+					action = 'delete';
+				}
+				if (!action) {
+					delete row.dataset.swipeAction;
+					return;
+				}
+				row.dataset.swipeAction = action;
+			},
+			commitGesture = (action, message, row) => {
+				resetSwipeRow(row);
+				if ('archive' === action) {
+					this.archiveMessage(message, row);
+				} else if ('delete' === action) {
+					this.deleteMessage(message, row);
+				} else if ('spam' === action) {
+					this.spamMessage(message, row);
+				} else if ('snooze' === action) {
+					this.snoozeMessage(message);
+				}
+			},
+			pointerDown = event => {
+				if (!ThemeStore.isMobile() || false === event.isPrimary || event.button
+					|| MessagelistUserStore.hasChecked() || MessagelistUserStore.mutationLoading()
+					|| event.target.closest(interactiveSelector)) {
+					return;
+				}
+				const row = event.target.closestWithin('.messageListItem', b_content);
+				if (!row) {
+					return;
+				}
+				cancelGesture(true);
+				const
+					message = ko.dataFor(row),
+					bounds = row.getBoundingClientRect();
+				gesture = {
+					distance: 0,
+					direction: 0,
+					height: bounds.height,
+					horizontal: false,
+					message: message,
+					pointerId: event.pointerId,
+					row: row,
+					width: bounds.width,
+					x: event.clientX,
+					y: event.clientY
+				};
+				gesture.longPressTimer = setTimeout(() => {
+					if (gesture?.row === row && !gesture.horizontal) {
+						message?.checked(true);
+						navigator.vibrate?.(10);
+						suppressClickUntil = Date.now() + 600;
+						cancelGesture(true);
+					}
+				}, 550);
+			},
+			pointerMove = event => {
+				if (!gesture || gesture.pointerId !== event.pointerId) {
+					return;
+				}
+				const
+					distance = event.clientX - gesture.x,
+					vertical = event.clientY - gesture.y,
+					horizontalDistance = Math.abs(distance),
+					verticalDistance = Math.abs(vertical);
+				if (8 < Math.max(horizontalDistance, verticalDistance)) {
+					clearTimeout(gesture.longPressTimer);
+					gesture.longPressTimer = 0;
+				}
+				if (!gesture.horizontal) {
+					const intent = classifyMessageSwipeIntent(horizontalDistance, verticalDistance);
+					if ('vertical' === intent) {
+						cancelGesture(true);
+						return;
+					}
+					if ('horizontal' !== intent) {
+						return;
+					}
+					gesture.horizontal = true;
+					gesture.direction = 0 < distance ? 1 : -1;
+					gesture.scrollTop = b_content.scrollTop;
+					clearTimeout(gesture.longPressTimer);
+					gesture.row.style.setProperty('--message-swipe-height', gesture.height + 'px');
+					gesture.row.style.setProperty('--message-swipe-width', gesture.width + 'px');
+					gesture.row.classList.add('swipe-active');
+					b_content.classList.add('swipe-locked');
+					gesture.row.setPointerCapture?.(gesture.pointerId);
+				}
+				const directionalDistance = Math.max(0, distance * gesture.direction);
+				gesture.distance = gesture.direction * Math.min(gesture.width * 0.72, directionalDistance);
+				gesture.row.style.setProperty('--message-swipe-x',
+					projectMessageSwipe(gesture.distance, gesture.direction) + 'px');
+				previewAction(gesture.row, gesture.distance, gesture.width);
+				keepSwipeScrollLocked(event);
+			},
+			pointerUp = event => {
+				if (!gesture || gesture.pointerId !== event.pointerId) {
+					return;
+				}
+				const current = gesture;
+				clearTimeout(current.longPressTimer);
+				gesture = null;
+				unlockSwipeScroll();
+				current.row.hasPointerCapture?.(current.pointerId)
+					&& current.row.releasePointerCapture(current.pointerId);
+				if (!current.horizontal) {
+					return;
+				}
+				suppressClickUntil = Date.now() + 600;
+				current.row.classList.remove('swipe-active');
+				let action = classifyMessageSwipe(current.distance, current.width);
+				if ('spam' === action && !this.canMarkAsSpam()) {
+					action = 'delete';
+				}
+				action ? commitGesture(action, current.message, current.row) : resetSwipeRow(current.row);
+			};
+
+		b_content.addEventListener('pointerdown', pointerDown, {passive: true});
+		b_content.addEventListener('pointermove', pointerMove, {passive: false});
+		b_content.addEventListener('pointerup', pointerUp, {passive: true});
+		b_content.addEventListener('pointercancel', () => cancelGesture(true), {passive: true});
+		b_content.addEventListener('touchmove', keepSwipeScrollLocked, {passive: false});
+		b_content.addEventListener('scroll', keepSwipeScrollLocked, {passive: true});
+		b_content.addEventListener('click', event => {
+			if (Date.now() < suppressClickUntil) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+			}
+		}, true);
+
 		addEventsListeners(dom, {
 			click: event => {
 				if (eqs(event, '.toggleLeft')) {
@@ -630,6 +967,20 @@ export class MailMessageList extends AbstractViewRight {
 					el && this.gotoPage(ko.dataFor(el)?.value);
 
 					eqs(event, '.checkboxCheckAll') && this.checkAll(!this.checkAll());
+				}
+			},
+			keydown: event => {
+				const checkbox = eqs(event, '.messageCheckbox');
+				if (checkbox && (' ' === event.key || 'Enter' === event.key)) {
+					stopEvent(event);
+					const message = ko.dataFor(checkbox);
+					message?.checked(!message.checked());
+					return;
+				}
+				const thread = eqs(event, '.threads-len');
+				if (thread && (' ' === event.key || 'Enter' === event.key)) {
+					stopEvent(event);
+					this.gotoThread(ko.dataFor(thread));
 				}
 			},
 			dblclick: event => {
@@ -827,6 +1178,16 @@ export class MailMessageList extends AbstractViewRight {
 
 	advancedSearchClick() {
 		showScreenPopup(AdvancedSearchPopupView, [MessagelistUserStore.mainSearch()]);
+	}
+
+	showMessageReceipts(message, event) {
+		stopEvent(event);
+		const messageId = message?.messageId?.replace(/([\\"])/g, '\\$1');
+		messageId && hasher.setHash(mailBox(
+			getFolderInboxName(),
+			1,
+			`header:"Content-Type multipart/report" body:"${messageId}"`
+		));
 	}
 
 	groupSearch(group) {

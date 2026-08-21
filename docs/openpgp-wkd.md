@@ -1,126 +1,93 @@
 # OpenPGP WKD
 
-SnappyMail uses Web Key Directory (WKD) for recipient key discovery.
-
-Future agent work on this feature should use the repo-local Codex skill at
-`.codex/skills/openpgp-wkd-gnupg/SKILL.md`. The skill maps the WKD/GnuPG
-implementation files, deployment commands, and invariants for interaction-free
-internal signing/encryption.
+SnappyMail uses Web Key Directory (WKD) to find the current public key for an
+email recipient. It does not publish a mailbox directory. The active private
+key is generated and used only in the browser vault; the server stores an
+opaque encrypted vault record and the corresponding public key.
 
 ## Discovery
 
-When a user composes to `local@example.com`, SnappyMail checks the recipient's
-local WKD store first, then this project's DNS/root manifest extension, then
-the standard WKD locations:
+For `local@example.com`, the browser asks the authenticated SnappyMail endpoint
+to fetch the exact hashed public object from domain-owned public WKD locations:
 
 ```text
-TXT _openpgpkey.example.com
-https://example.com/.well-known/openpgpkey/index.json
-https://openpgpkey.example.com/.well-known/openpgpkey/example.com/index.json
-```
-
-The TXT record format is:
-
-```text
-v=OPENPGPKEY1; url=https://openpgpkey.example.com/.well-known/openpgpkey/example.com/index.json; alg=sha256-email-v1
-```
-
-The TXT `url` must point to a manifest `index.json`, not directly to a key.
-It may be hosted at the domain apex, at `openpgpkey.<domain>`, or at a
-domain-owned subhost whose path includes the destination domain.
-
-The manifest is JSON:
-
-```json
-{
-		"version": 1,
-		"algorithm": "sha256-email-v1",
-		"domain": "example.com",
-		"generated_at": "2026-07-08T00:00:00.000Z",
-		"entries": [
-			{
-				"email_hash": "<sha256(lowercase(local@example.com))>",
-			"wkd_hash": "<zbase32-sha1-local>",
-			"key_url": "https://openpgpkey.example.com/.well-known/openpgpkey/example.com/hu/<zbase32-sha1-local>"
-		}
-	]
-}
-```
-
-SnappyMail computes the SHA-256 hash for the exact target recipient email,
-compares it to `email_hash`, verifies the manifest `domain`, verifies the
-entry's exact `wkd_hash`, and fetches only the matching `key_url`.
-
-The manifest and key URLs are accepted only when they stay under one of the
-domain-owned WKD paths:
-
-```text
-https://example.com/.well-known/openpgpkey/index.json
-https://example.com/.well-known/openpgpkey/hu/<zbase32-sha1-local>
-https://openpgpkey.example.com/.well-known/openpgpkey/example.com/index.json
-https://openpgpkey.example.com/.well-known/openpgpkey/example.com/hu/<zbase32-sha1-local>
-https://owned-subhost.example.com/.well-known/openpgpkey/example.com/index.json
-https://owned-subhost.example.com/.well-known/openpgpkey/example.com/hu/<zbase32-sha1-local>
-```
-
-Accepted URLs must use HTTPS, must not contain username/password credentials,
-and must not include query strings or fragments. `email_hash` is lowercase
-64-character hex. `wkd_hash` is the 32-character zbase32 SHA-1 local-part hash
-used by WKD.
-
-If no manifest entry is found, SnappyMail checks the standard WKD locations:
-
-```text
-https://example.com/.well-known/openpgpkey/hu/<zbase32-sha1-local>?l=local
 https://openpgpkey.example.com/.well-known/openpgpkey/example.com/hu/<zbase32-sha1-local>?l=local
+https://example.com/.well-known/openpgpkey/hu/<zbase32-sha1-local>?l=local
 ```
 
-If a key is found, SnappyMail imports that public key into the sender's GnuPG
-keyring before encryption. Send-time encryption discovery is automatic: the
-sender UI and server-side `SendMessage` path both attempt this discovery before
-sending, so a known recipient key can be used without manual key import.
+The domain after `@` is the identity domain and remains the discovery
+authority. It is not replaced by the domain's MX target, SMTP or IMAP host, or
+webmail hostname. For `colin@nixc.us`, standard discovery therefore stays at
+`openpgpkey.nixc.us` and `nixc.us` even though the MX target is
+`box.p.nixc.us`. A CNAME can route `openpgpkey.nixc.us` to another machine, but
+it does not rewrite the HTTPS host or WKD path.
+
+After standard WKD, SnappyMail may query the profile-defined TXT locator at
+`_openpgpkey.<identity-domain>`:
+
+```text
+v=OPENPGPKEY1; alg=sha256-email-v1; url=https://.../manifest.json
+```
+
+The TXT owner is derived from the identity domain, never the MX target. Thus
+`_openpgpkey.box.p.nixc.us` applies to `@box.p.nixc.us` identities, not to
+`@nixc.us` identities. This TXT convention is a SnappyMail extension, not WKD
+or the RFC 7929 `OPENPGPKEY` record.
+
+The locator may advertise a nonstandard HTTPS manifest path on the identity
+domain or one of its subdomains. SnappyMail accepts that path only from the
+fixed identity-domain TXT record. The manifest may identify keys only at the
+standard direct or advanced `hu/<hash>` WKD paths.
+
+The manifest uses `version: 1`, `algorithm: sha256-email-v1`, the exact
+identity `domain`, and an `entries` array. Each entry contains a 64-character
+lowercase hexadecimal SHA-256 hash of the normalized full email address, the
+32-character WKD z-base-32 hash, and an exact standard direct or advanced
+`key_url`. The key URL has no query string, so the manifest never exposes the
+plaintext local-part through WKD's optional `?l=` hint. Conflicting valid TXT
+locators fail closed as ambiguous.
+
+The local part is lowercased, SHA-1 hashed, and encoded with WKD z-base-32.
+The browser validates that the returned OpenPGP key has the exact mailbox UID
+and a usable encryption subkey. It may use a validated public hashed manifest
+or DNS TXT pointer only after the standard public WKD paths, within the same
+bounded lookup deadline.
+
+Send-time lookup is authoritative for automatic encryption. A cached browser
+key or application-local WKD copy cannot satisfy it. Every To/Cc/Bcc recipient
+must return a fresh public WKD key before encryption is used. If any result is
+absent, unusable, or times out, the address is treated as not ready for OpenPGP
+(for example, it may be new, mistyped, or never logged in). Compose retains the
+complete recipient set, warns that the message will be plaintext, and sends it
+without encryption.
 
 ## Publishing
 
-SnappyMail publishes public keys only for local accounts that have a matching
-server-side GnuPG secret key. Publishing a public key without the corresponding
-secret key in the account keyring can create mail that appears encrypted but
-cannot be decrypted by the recipient in this webmail instance.
+On first successful login, the browser creates an OpenPGP identity inside the
+browser vault and submits only its opaque encrypted vault record plus public
+key. The server writes the exact binary public key to its `hu/<hash>` object.
+The write succeeds only when that object matches the submitted public key. If
+publication fails, the server restores the previous opaque vault record rather
+than leaving an unpublished recipient identity behind.
 
-The local WKD store lives under:
+The public WKD response is authoritative. Branded webmail hosts may mirror the
+advanced response for usability, but standards-based sender discovery uses the
+recipient domain's `openpgpkey.` host and direct root WKD path. Static mirrors
+must copy the same exact `hu/<hash>` objects; legacy GnuPG sync scripts are not
+a source for browser-vault public keys.
 
-```text
-/var/lib/snappymail/_data_/_default_/openpgpkey/<domain>/hu/<hash>
-```
+## Send Contract
 
-`scripts/sync-wkd-static-sites.cjs` refreshes that local WKD store from
-SnappyMail GnuPG keyrings and mirrors it into adjacent static sites:
-
-```text
-../boompay-ca/.well-known/openpgpkey/
-../boompay-ca/docs/.well-known/openpgpkey/
-../nixc-us/.well-known/openpgpkey/
-../nixc-us/docs/.well-known/openpgpkey/
-```
-
-The script writes both the direct and advanced WKD layouts so either the domain
-apex or an `openpgpkey.` host can serve the same keys.
+When every To/Cc/Bcc recipient has a fresh usable WKD key and the browser vault
+is available, the browser encrypts to every recipient and the sender. It then
+parses the ciphertext it just created and verifies a recipient packet for every
+selected encryption subkey. There is no partial-recipient encryption and no
+server-side OpenPGP operation. A missing key, vault failure, encryption error,
+or unsupported encrypted attachment produces one plaintext message for every
+recipient with a non-blocking warning instead of blocking SMTP.
 
 ## Privacy
 
-The manifest intentionally avoids plaintext email addresses. It is still a
-public hash list, so common addresses such as `admin`, `contact`, `info`, and
-employee names can be guessed and compared offline. For this deployment, the
-tradeoff is accepted so `mail.nixc.us`, `webmail.boompay.ca`, and static domain
-roots can advertise available recipient keys even when the webmail host cannot
-serve the destination domain's root `.well-known` directly.
-
-Public manifests must not contain plaintext mailbox names or addresses. The
-only recipient identifier in the manifest is `email_hash`, computed as
-`sha256(lowercase(local@domain))`. Public key objects are stored under standard
-WKD `hu/<zbase32-sha1-local>` paths so non-Snappy WKD clients can still fetch
-keys from known locations.
-
-The static-site publisher intentionally emits the same schema consumed by
-SnappyMail: `version`, `algorithm`, `domain`, `generated_at`, and `entries`
-containing `email_hash`, `wkd_hash`, and `key_url`.
+Public WKD hosts expose only exact hashed `hu/<hash>` key objects and optional
+hashed manifest entries. They must not expose plaintext mailbox lists,
+directory listings, or an endpoint that enumerates recipient keys.

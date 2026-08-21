@@ -4,14 +4,13 @@ import { addObservablesTo } from 'External/ko';
 
 let notificator = null,
 	player = null,
+	audioUnlocked = false,
 	canPlay = type => !!player?.canPlayType(type).replace('no', ''),
-
-	audioCtx = window.AudioContext || window.webkitAudioContext,
 
 	play = (url, name) => {
 		if (player) {
 			player.src = url;
-			player.play();
+			player.play()?.catch(() => {});
 			name = name.trim();
 			fireEvent('audio.start', name.replace(/\.([a-z0-9]{3})$/, '') || 'audio');
 		}
@@ -33,9 +32,8 @@ let notificator = null,
 		return null;
 	},
 
-	// The AudioContext is not allowed to start.
-	// It must be resumed (or created) after a user gesture on the page. https://goo.gl/7K7WLu
-	// Setup listeners to attempt an unlock
+	// Do not construct an AudioContext before a gesture. HTMLAudioElement is
+	// sufficient here and avoids browser autoplay-policy console errors.
 	unlockEvents = [
 		'click','dblclick',
 		'contextmenu',
@@ -47,17 +45,9 @@ let notificator = null,
 	],
 	unlock = () => {
 		unlockEvents.forEach(type => doc.removeEventListener(type, unlock, true));
-		if (audioCtx) {
-			console.log('AudioContext ' + audioCtx.state);
-			audioCtx.resume();
-		}
-//		setTimeout(()=>SMAudio.playNotification(0,1),1);
+		audioUnlocked = true;
 	};
 
-if (audioCtx) {
-	audioCtx = audioCtx ? new audioCtx : null;
-	audioCtx.onstatechange = unlock;
-}
 unlockEvents.forEach(type => doc.addEventListener(type, unlock, true));
 
 /**
@@ -113,7 +103,7 @@ export const SMAudio = new class {
 	 */
 	playNotification(force, silent) {
 		if (force || this.notifications()) {
-			if ('running' == audioCtx.state && (this.supportedMp3 || this.supportedOgg)) {
+			if (audioUnlocked && (this.supportedMp3 || this.supportedOgg)) {
 				notificator = notificator || createNewObject();
 				if (notificator) {
 //					SettingsGet('NotificationSound').startsWith('custom@')
@@ -121,10 +111,8 @@ export const SMAudio = new class {
 						+ SettingsGet('NotificationSound')
 						+ (this.supportedMp3 ? '.mp3' : '.ogg'));
 					notificator.volume = silent ? 0.01 : 1;
-					notificator.play();
+					notificator.play()?.catch(() => {});
 				}
-			} else {
-				console.log('No audio: ' + audioCtx.state);
 			}
 		}
 	}

@@ -54,6 +54,14 @@ class PECL implements \SnappyMail\PGP\PGPInterface
 		$this->GnuPG->clearsignkeys();
 	}
 
+	public function clearPassphraseCache() : bool
+	{
+		$this->GnuPG->cleardecryptkeys();
+		$this->GnuPG->clearsignkeys();
+		$GPG = $this->getGPG(false);
+		return $GPG ? $GPG->clearPassphraseCache() : true;
+	}
+
 	public static function isSupported() : bool
 	{
 		// Disabled due to failures with "no passphrase" while a passphrase does exist
@@ -211,6 +219,25 @@ class PECL implements \SnappyMail\PGP\PGPInterface
 		return $this->GnuPG->encrypt(\stream_get_contents($fp)) ?: $this->gnupgError();
 	}
 
+	public function encryptSign(string $plaintext) /*: string|false*/
+	{
+		return $this->GnuPG->encryptsign($plaintext) ?: $this->gnupgError();
+	}
+
+	public function encryptSignFile(string $filename) /*: string|false*/
+	{
+		return $this->GnuPG->encryptsign(\file_get_contents($filename)) ?: $this->gnupgError();
+	}
+
+	public function encryptSignStream(/*resource*/ $fp, /*string|resource*/ $output = null) /*: string|false*/
+	{
+		if (!$fp || !\is_resource($fp)) {
+			throw new \Exception('Invalid stream resource');
+		}
+		\rewind($fp);
+		return $this->GnuPG->encryptsign(\stream_get_contents($fp)) ?: $this->gnupgError();
+	}
+
 	/**
 	 * Exports a key
 	 */
@@ -294,13 +321,23 @@ class PECL implements \SnappyMail\PGP\PGPInterface
 			'private' => []
 		];
 		// Public
-		foreach (($this->GnuPG->keyinfo($pattern) ?: []) as $key) {
+		try {
+			$publicKeys = $this->GnuPG->keyinfo($pattern) ?: [];
+		} catch (\Throwable $e) {
+			$publicKeys = [];
+		}
+		foreach ($publicKeys as $key) {
 			$key['can_verify'] = $key['can_sign'];
 			unset($key['can_sign']);
 			$keys['public'][] = $key;
 		}
 		// Private, read https://github.com/php-gnupg/php-gnupg/issues/5
-		foreach (($this->GnuPG->keyinfo($pattern, 1) ?: []) as $key) {
+		try {
+			$privateKeys = $this->GnuPG->keyinfo($pattern, 1) ?: [];
+		} catch (\Throwable $e) {
+			$privateKeys = [];
+		}
+		foreach ($privateKeys as $key) {
 			$key['can_decrypt'] = $key['can_encrypt'];
 			unset($key['can_encrypt']);
 			$keys['private'][] = $key;

@@ -1,0 +1,578 @@
+@font-face {
+	font-display: swap;
+	font-family: "Inter";
+	font-style: normal;
+	font-weight: 100 900;
+	src: url("fonts/inter.woff2") format("woff2");
+}
+
+:root {
+	color-scheme: light;
+	--brand-primary-color: #C8201E;
+	--brand-primary-hover: #A81C1E;
+	--brand-secondary-color: #1E7FD6;
+	--brand-theme-color: #0E1A2B;
+	--brand-slate: #1C2C44;
+	--brand-danger: #C8201E;
+	--brand-success: #1E8E3E;
+	--brand-text: #172033;
+	--brand-muted: #667085;
+	--brand-surface: #F6F8FB;
+	--brand-surface-strong: #FFFFFF;
+	--brand-border: #D5DCE6;
+
+	--fontSans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	--main-color: var(--brand-text);
+	--main-bg-color: #EEF2F6;
+	--main-bg-image: none;
+	--main-font-size: 14px;
+	--link-color: var(--brand-secondary-color);
+
+	--loading-color: var(--brand-theme-color);
+	--loading-text-shadow: none;
+	--spinner-color: var(--brand-primary-color);
+
+	--login-color: var(--brand-text);
+	--login-bg-color: rgba(255, 255, 255, 0.97);
+	--login-box-shadow: 0 18px 50px rgba(14, 26, 43, 0.18);
+	--login-border: 1px solid var(--brand-border);
+	--login-border-radius: 8px;
+
+	--panel-bg-clr: var(--brand-surface-strong);
+	--dialog-bg-clr: var(--brand-surface-strong);
+	--dialog-border-clr: var(--brand-border);
+	--dialog-border-radius: 8px;
+	--dialog-clr: var(--brand-text);
+	--border-color: var(--brand-border);
+	--border-radius: 8px;
+	--input-border-radius: 6px;
+	--input-bg-clr: #FFFFFF;
+	--input-border-clr: #C4CCD8;
+	--input-focus-border-clr: var(--brand-secondary-color);
+	--input-clr: var(--brand-text);
+
+	--btn-clr: var(--brand-theme-color);
+	--btn-bg-clr: #FFFFFF;
+	--btn-border-clr: #C4CCD8;
+	--btn-border-radius: 6px;
+	--btn-danger-bg-clr: var(--brand-danger);
+	--btn-success-bg-clr: var(--brand-success);
+
+	--dropdown-menu-color: var(--brand-text);
+	--dropdown-menu-bg-color: #FFFFFF;
+	--dropdown-menu-hover-bg-color: rgba(30, 127, 214, 0.10);
+	--dropdown-menu-hover-color: var(--brand-theme-color);
+	--dropdown-menu-disable-color: #8B98AA;
+
+	--folders-color: #EAF0F8;
+	--folders-disabled-color: rgba(255, 255, 255, 0.48);
+	--folders-selected-color: #FFFFFF;
+	--folders-selected-bg-color: rgba(200, 32, 30, 0.28);
+	--folders-focused-color: #FFFFFF;
+	--folders-focused-bg-color: rgba(30, 127, 214, 0.28);
+	--folders-hover-color: #FFFFFF;
+	--folders-hover-bg-color: rgba(255, 255, 255, 0.10);
+	--folders-drop-color: #FFFFFF;
+	--folders-drop-bg-color: rgba(200, 32, 30, 0.34);
+	--unread-count-bg-color: var(--brand-primary-color);
+	--unread-count-color: #FFFFFF;
+
+	--settings-menu-color: #EAF0F8;
+	--settings-menu-selected-color: #FFFFFF;
+	--settings-menu-selected-bg-color: rgba(200, 32, 30, 0.28);
+	--settings-menu-hover-color: #FFFFFF;
+	--settings-menu-hover-bg-color: rgba(255, 255, 255, 0.10);
+
+	--message-list-toolbar-bg-color: #EEF2F6;
+	--message-header-bg-clr: #EEF2F6;
+	--tab-active-bg-clr: #FFFFFF;
+	--tab-hover-border-clr: #C4CCD8;
+	--smMainShadow: 0 10px 28px rgba(14, 26, 43, 0.12);
+}
+
+body#rl-app {
+	background:
+		linear-gradient(135deg, rgba(14, 26, 43, 0.10), rgba(30, 127, 214, 0.06) 44%, rgba(200, 32, 30, 0.06)),
+		var(--main-bg-color);
+	font-family: var(--fontSans);
+}
+
+#rl-app {
+	font-feature-settings: "kern", "cv02", "cv03", "cv04";
+	letter-spacing: 0;
+}
+
+#rl-left {
+	background: linear-gradient(180deg, var(--brand-theme-color), var(--brand-slate));
+	box-shadow: 12px 0 30px rgba(14, 26, 43, 0.18);
+}
+
+#rl-left::before {
+	background: url("images/logo.svg") left center / contain no-repeat;
+	content: "";
+	display: block;
+	height: 64px;
+	margin: 16px 12px 8px;
+}
+
+#rl-left .buttonCompose,
+#V-MailMessageList .buttonCompose {
+	align-items: center;
+	background: var(--brand-primary-color);
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-radius: 8px;
+	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+	color: #FFFFFF;
+	display: inline-flex;
+	font-weight: 700;
+	gap: 8px;
+	justify-content: flex-start;
+	letter-spacing: 0;
+	line-height: 34px;
+	max-width: none;
+	min-height: 34px;
+	padding: 0 14px;
+	text-shadow: none;
+	transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+#rl-left .buttonCompose {
+	margin: 0 8px 12px;
+	width: calc(100% - 16px);
+}
+
+#V-MailMessageList .buttonCompose {
+	height: 36px;
+	justify-content: center;
+	padding: 0;
+	width: 44px;
+}
+
+#rl-left .buttonCompose:hover,
+#V-MailMessageList .buttonCompose:hover {
+	background: var(--brand-primary-hover);
+	box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20);
+	opacity: 1;
+	transform: translateY(-1px);
+}
+
+#rl-left .buttonCompose:active,
+#V-MailMessageList .buttonCompose:active {
+	box-shadow: 0 5px 14px rgba(0, 0, 0, 0.14);
+	transform: translateY(0);
+}
+
+#rl-left .buttonCompose.btn-warning,
+#V-MailMessageList .buttonCompose.btn-warning {
+	background: rgba(255, 255, 255, 0.82);
+	color: var(--brand-theme-color);
+}
+
+#rl-left .buttonCompose .compose-plus,
+#V-MailMessageList .buttonCompose .compose-plus {
+	color: #FFFFFF;
+	font-size: 13px;
+	font-weight: 800;
+	line-height: 1;
+	margin: 0;
+	min-width: auto;
+}
+
+#rl-left .buttonComposeText {
+	display: inline-block;
+	max-width: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+html.rl-left-panel-disabled #rl-left .buttonCompose {
+	border-radius: 8px;
+	height: 36px;
+	padding: 0;
+	width: 36px;
+}
+
+html.rl-left-panel-disabled #rl-left .buttonCompose .compose-plus {
+	font-size: 15px;
+}
+
+html.rl-left-panel-disabled #rl-left::before {
+	background-image: none;
+	height: 20px;
+	margin: 10px 0 0;
+}
+
+#rl-right {
+	background: transparent;
+}
+
+.LoginView .descWrapper {
+	background: url("images/logo.svg") center center / contain no-repeat;
+	color: var(--brand-theme-color);
+	font-size: 0;
+	height: clamp(136px, 20vh, 176px);
+	margin-bottom: 16px;
+	text-shadow: none;
+}
+
+.LoginView form {
+	backdrop-filter: blur(12px);
+}
+
+.LoginView form * {
+	color: var(--brand-text);
+}
+
+.LoginView input,
+.LoginView .btn {
+	background: #FFFFFF;
+	border: 1px solid var(--brand-border);
+	color: var(--brand-text);
+}
+
+.LoginView input:focus,
+.LoginView input:hover {
+	border-color: var(--brand-secondary-color);
+	box-shadow: 0 0 0 3px rgba(30, 127, 214, 0.13);
+}
+
+.LoginView .buttonLogin,
+.btn.btn-success {
+	background: var(--brand-primary-color);
+	border-color: var(--brand-primary-color);
+	color: #FFFFFF;
+	font-weight: 700;
+	letter-spacing: 0;
+	text-shadow: none;
+}
+
+.LoginView .buttonLogin:hover,
+.LoginView .buttonLogin:focus,
+.btn.btn-success:hover,
+.btn.btn-success:focus {
+	background: var(--brand-primary-hover);
+	border-color: var(--brand-primary-hover);
+	color: #FFFFFF;
+}
+
+.btn {
+	background-image: none;
+	font-weight: 600;
+	letter-spacing: 0;
+	text-shadow: none;
+}
+
+.btn-toolbar {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.btn-toolbar > *,
+.btn-toolbar .btn,
+.btn-toolbar .btn-group {
+	margin-right: 0 !important;
+}
+
+.btn-toolbar .btn-group {
+	align-items: center;
+	display: inline-flex;
+	gap: 6px;
+}
+
+.btn-toolbar .btn-group > * + * {
+	margin-left: 0 !important;
+}
+
+.btn-toolbar > .btn,
+.btn-toolbar .btn-group > .btn {
+	border-radius: var(--btn-border-radius, 6px) !important;
+	min-width: 34px;
+}
+
+#V-MailMessageList .btn-toolbar,
+#V-MailMessageView .top-toolbar {
+	gap: 9px;
+	padding-left: 8px;
+	padding-right: 8px;
+}
+
+#rl-left .b-toolbar,
+#rl-left .b-footer {
+	gap: 8px;
+	padding-right: 8px;
+}
+
+#rl-left .buttonCompose,
+#V-MailMessageList .buttonCompose {
+	border-radius: 8px !important;
+}
+
+dialog > footer .btn + .btn {
+	margin-left: 8px;
+}
+
+.btn:hover,
+.btn:focus {
+	background-color: rgba(30, 127, 214, 0.08);
+	border-color: var(--brand-secondary-color);
+	color: var(--brand-theme-color);
+}
+
+.btn-danger,
+.button-confirm-delete.delete-access {
+	background-color: var(--brand-danger);
+	border-color: var(--brand-danger);
+	color: #FFFFFF;
+}
+
+input,
+select,
+.select,
+textarea,
+.emailaddresses {
+	box-shadow: none;
+}
+
+input:focus,
+select:focus,
+.select:focus,
+textarea:focus,
+.emailaddresses.focused {
+	border-color: var(--brand-secondary-color);
+	box-shadow: 0 0 0 3px rgba(30, 127, 214, 0.13);
+}
+
+#V-MailMessageList,
+#V-MailMessageView,
+#V-SettingsPane,
+dialog {
+	border-color: var(--brand-border);
+}
+
+.messageListItem.selected,
+.messageListItem.focused {
+	background-color: rgba(30, 127, 214, 0.11);
+	border-left-color: var(--brand-secondary-color);
+	border-right-color: var(--brand-secondary-color) !important;
+}
+
+.messageListItem.unseen {
+	background-color: #FFFFFF;
+	color: var(--brand-theme-color);
+	font-weight: 650;
+}
+
+.messageListItem.flagged,
+.messageListItem.answered.flagged {
+	border-left-color: var(--brand-primary-color);
+}
+
+.thm-message-list-top-toolbar,
+.thm-message-list-bottom-toolbar {
+	background: #EEF2F6 !important;
+	border-color: var(--brand-border) !important;
+}
+
+#messageItem .bodySubHeader,
+.messageView .b-message-header {
+	background-color: #EEF2F6;
+	border-color: var(--brand-border);
+}
+
+.legend {
+	border-bottom-color: var(--brand-border);
+	color: var(--brand-theme-color);
+	font-size: 135%;
+	font-weight: 700;
+	letter-spacing: 0;
+}
+
+#V-SettingsMenu nav a,
+.b-folders li a {
+	border-radius: 6px;
+	font-weight: 600;
+	margin: 1px 6px;
+}
+
+#V-SettingsMenu nav a.selected,
+.b-folders li a.selectable.selected {
+	box-shadow: inset 3px 0 0 var(--brand-primary-color);
+}
+
+.dropdown.show {
+	box-shadow: 0 12px 28px rgba(14, 26, 43, 0.16);
+}
+
+.dropdown-menu {
+	border-color: var(--brand-border);
+	border-radius: 8px;
+	box-shadow: 0 14px 32px rgba(14, 26, 43, 0.14);
+}
+
+.alert-info {
+	background-color: rgba(30, 127, 214, 0.08);
+	border-color: rgba(30, 127, 214, 0.22);
+	color: var(--brand-theme-color);
+}
+
+.alert-error {
+	background-color: rgba(200, 32, 30, 0.08);
+	border-color: rgba(200, 32, 30, 0.28);
+	color: var(--brand-primary-hover);
+}
+
+#V-PopupsCompose .organization-encryption-status {
+	border-left-color: rgba(30, 142, 62, 0.62);
+	color: var(--brand-muted);
+	font-weight: 600;
+}
+
+#V-Settings-Security .encryption-summary {
+	align-items: center;
+	background: #F8FAFC;
+	border: 1px solid var(--brand-border);
+	border-left: 4px solid var(--brand-secondary-color);
+	border-radius: 6px;
+	display: flex;
+	gap: 12px;
+	margin: 0 0 18px;
+	max-width: 760px;
+	padding: 14px 16px;
+}
+
+#V-Settings-Security .encryption-summary.ready {
+	border-left-color: var(--brand-success);
+}
+
+#V-Settings-Security .encryption-summary.pending {
+	border-left-color: var(--brand-secondary-color);
+}
+
+#V-Settings-Security .encryption-summary.unavailable {
+	border-left-color: var(--brand-danger);
+}
+
+#V-Settings-Security .encryption-mark {
+	align-items: center;
+	background: rgba(30, 127, 214, 0.10);
+	border-radius: 6px;
+	color: var(--brand-secondary-color);
+	display: flex;
+	flex: 0 0 36px;
+	font-size: 18px;
+	height: 36px;
+	justify-content: center;
+}
+
+#V-Settings-Security .encryption-copy {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+#V-Settings-Security .encryption-title {
+	color: var(--brand-theme-color);
+	font-size: 15px;
+	font-weight: 700;
+	line-height: 1.3;
+}
+
+#V-Settings-Security .encryption-meta {
+	color: var(--brand-muted);
+	font-size: 13px;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+#V-Settings-Security .encryption-state {
+	color: var(--brand-theme-color);
+	flex: 0 0 auto;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+#V-Settings-Security .advanced-keys {
+	border-top: 1px solid var(--brand-border);
+	margin-top: 14px;
+	max-width: 900px;
+	padding-top: 12px;
+}
+
+#V-Settings-Security .advanced-keys > summary {
+	color: var(--brand-theme-color);
+	cursor: pointer;
+	font-weight: 700;
+	line-height: 2;
+}
+
+#V-Settings-Security .key-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 10px 0 18px;
+}
+
+#V-Settings-Security .key-section {
+	border-top: 1px solid var(--brand-border);
+	margin-top: 18px;
+	padding-top: 16px;
+}
+
+#V-Settings-Security .key-section h3 {
+	color: var(--brand-theme-color);
+	font-size: 16px;
+	font-weight: 700;
+	line-height: 1.4;
+	margin: 0 0 8px;
+}
+
+#V-Settings-Security .key-counts {
+	color: var(--brand-muted);
+	display: flex;
+	flex-wrap: wrap;
+	font-size: 12px;
+	gap: 4px 8px;
+	margin-bottom: 8px;
+}
+
+#V-Settings-Security #mailvelope-settings {
+	height: 40em;
+}
+
+#V-PopupsKeyboardShortcutsHelp .modal-body {
+	padding: 16px;
+}
+
+#V-PopupsKeyboardShortcutsHelp .tabs > label {
+	border-radius: 6px 6px 0 0;
+	color: var(--brand-theme-color);
+	font-weight: 700;
+	letter-spacing: 0;
+	padding: 7px 8px;
+}
+
+#V-PopupsKeyboardShortcutsHelp .tabs > [id^="tab"]:checked + label {
+	background: #FFFFFF;
+	border-color: var(--brand-border) var(--brand-border) #FFFFFF var(--brand-border);
+}
+
+#V-PopupsKeyboardShortcutsHelp table {
+	background: #FFFFFF;
+	border-color: var(--brand-border);
+}
+
+#V-PopupsKeyboardShortcutsHelp td {
+	border-color: var(--brand-border);
+	color: var(--brand-text);
+	line-height: 1.45;
+	padding: 8px 10px;
+}
+
+#V-PopupsKeyboardShortcutsHelp kbd {
+	background: #EEF2F6;
+	border-color: #C4CCD8;
+	color: var(--brand-theme-color);
+}

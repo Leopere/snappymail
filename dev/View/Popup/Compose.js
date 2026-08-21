@@ -31,7 +31,6 @@ import { FolderUserStore } from 'Stores/User/Folder';
 
 import { PgpUserStore } from 'Stores/User/Pgp';
 import { OpenPGPUserStore } from 'Stores/User/OpenPGP';
-import { GnuPGUserStore } from 'Stores/User/GnuPG';
 import { MailvelopeUserStore } from 'Stores/User/Mailvelope';
 //import { OpenPgpImportPopupView } from 'View/Popup/OpenPgpImport';
 import { SMimeUserStore } from 'Stores/User/SMime';
@@ -69,12 +68,6 @@ const
 	tpl = createElement('template'),
 
 	normalizeEmail = email => IDN.toASCII((email || '').trim()).toLowerCase(),
-
-	emailDomain = email => {
-		email = normalizeEmail(email);
-		const at = email.lastIndexOf('@');
-		return 0 < at ? email.slice(at + 1) : '';
-	},
 
 	base64_encode = text => text ? b64Encode(text).match(/.{1,76}/g).join('\r\n') : '',
 
@@ -256,6 +249,7 @@ export class ComposePopupView extends AbstractViewPopup {
 
 			sendErrorDesc: '',
 			savedErrorDesc: '',
+			plaintextNotice: '',
 
 			savedTime: 0,
 
@@ -316,13 +310,14 @@ export class ComposePopupView extends AbstractViewPopup {
 		this.doClose = this.doClose.debounce(200);
 
 		this.iTimer = 0;
-		this.internalGnuPGAuto = false;
-		this.syncGnuPGPolicyFromKeyring = () => {
+		this.plaintextFallbackPending = false;
+		this.automaticOpenPgpPolicy = false;
+		this.syncOpenPgpPolicyFromKeyring = () => {
 			this.initSign();
 			this.initEncrypt();
 		};
-		GnuPGUserStore.publicKeys.subscribe(this.syncGnuPGPolicyFromKeyring);
-		GnuPGUserStore.privateKeys.subscribe(this.syncGnuPGPolicyFromKeyring);
+		OpenPGPUserStore.publicKeys.subscribe(this.syncOpenPgpPolicyFromKeyring);
+		OpenPGPUserStore.privateKeys.subscribe(this.syncOpenPgpPolicyFromKeyring);
 
 		addComputablesTo(this, {
 			sendButtonSuccess: () => !this.sendError() && !this.sendSuccessButSaveError(),
@@ -360,15 +355,6 @@ export class ComposePopupView extends AbstractViewPopup {
 
 			encryptOptionsText: () => this.encryptOptions().join(', '),
 			signOptionsText: () => this.signOptions().map(o => o[0]).join(', '),
-			internalGnuPGNoticeText: () => {
-				const state = this.internalGnuPGState();
-				if (state.ready) {
-					return 'Organization recipients: server GPG signs and encrypts this message automatically.';
-				}
-				return this.internalDomainRecipients().length
-					? 'Organization recipients need server GPG keys before this message can be sent.'
-					: '';
-			},
 
 			identitiesOptions: () =>
 				IdentityUserStore.map(item => ({
@@ -392,7 +378,7 @@ export class ComposePopupView extends AbstractViewPopup {
 					this.from(value.toString());
 					this.doEncrypt(value.pgpEncrypt() || SettingsUserStore.pgpEncrypt());
 					this.doSign(value.pgpSign() || SettingsUserStore.pgpSign());
-					this.syncInternalGnuPGPolicy();
+					this.syncAutomaticOpenPgpPolicy();
 				}
 			},
 
@@ -570,18 +556,8 @@ export class ComposePopupView extends AbstractViewPopup {
 									} else {
 										this.sendError(true);
 										sendFailed(iError, data);
-										// Remove remembered passphrase as it could be wrong
-											let key = ('S/MIME' === params.sign) ? this.currentIdentity() : null,
-												isGnuPGKey = false;
-											params.signFingerprint && this.signOptions.forEach(option => {
-												if ('GnuPG' === option[0]) {
-													key = option[1];
-													isGnuPGKey = true;
-												}
-											});
-											key && (isGnuPGKey
-												? GnuPGUserStore.forgetPassphraseForKey(key)
-												: Passphrases.delete(key));
+										// S/MIME retains a separate local passphrase cache.
+										'S/MIME' === params.sign && Passphrases.delete(this.currentIdentity());
 										}
 								} else {
 									if (arrayLength(this.aDraftInfo) > 0) {
@@ -610,10 +586,29 @@ export class ComposePopupView extends AbstractViewPopup {
 							30000
 						);
 					};
+					const confirmPlaintextSend = params => {
+						if (!this.plaintextFallbackPending) {
+							sendMessage(params);
+							return;
+						}
+						showScreenPopup(AskPopupView, [
+							i18n(
+								'COMPOSE/OPENPGP_PLAINTEXT_CONFIRMATION',
+								null,
+								'OpenPGP could not protect this message. Send it in plaintext?'
+							),
+							() => sendMessage(params),
+							() => this.sending(false),
+							'.buttonNo',
+							0,
+							i18n('COMPOSE/OPENPGP_SEND_PLAINTEXT', null, 'Send plaintext'),
+							i18n('GLOBAL/CANCEL')
+						]);
+					};
 
 					this.getMessageRequestParams(sSentFolder)
-					.then(sendMessage)
-					.catch(sendError);
+						.then(confirmPlaintextSend)
+						.catch(sendError);
 				} catch (e) {
 					sendError(e);
 				}
@@ -1420,6 +1415,8 @@ export class ComposePopupView extends AbstractViewPopup {
 		this.sendError(false);
 		this.sendSuccessButSaveError(false);
 		this.savedError(false);
+		this.plaintextNotice('');
+		this.plaintextFallbackPending = false;
 		this.savedTime(0);
 		this.emptyToError(false);
 		this.attachmentsInProcessError(false);
@@ -1428,7 +1425,7 @@ export class ComposePopupView extends AbstractViewPopup {
 		this.showBcc(false);
 		this.showReplyTo(false);
 
-		this.internalGnuPGAuto = false;
+		this.automaticOpenPgpPolicy = false;
 		this.doSign(SettingsUserStore.pgpSign());
 		this.doEncrypt(SettingsUserStore.pgpEncrypt());
 
@@ -1456,6 +1453,10 @@ export class ComposePopupView extends AbstractViewPopup {
 	}
 
 	allRecipients() {
+		return this.messageRecipients();
+	}
+
+	encryptionRecipients() {
 		const sender = normalizeEmail(getEmail(this.from()));
 		return [sender].concat(this.messageRecipients()).validUnique();
 	}
@@ -1464,47 +1465,40 @@ export class ComposePopupView extends AbstractViewPopup {
 		return emailsFromAddressFields([this.to(), this.cc(), this.bcc()]);
 	}
 
-	internalDomainRecipients() {
-		const domain = emailDomain(getEmail(this.from())),
-			recipients = this.messageRecipients();
-		return domain && recipients.length && recipients.every(email => emailDomain(email) === domain)
-			? recipients
-			: [];
-	}
-
-	internalGnuPGState() {
-		const sender = normalizeEmail(getEmail(this.from())),
-			recipients = this.internalDomainRecipients().concat(sender).validUnique(),
-			signingKey = sender ? GnuPGUserStore.getPrivateKeyFor(sender, 1) : null;
+	automaticOpenPgpState() {
+		const recipients = this.messageRecipients(),
+			sender = normalizeEmail(getEmail(this.from())),
+			encryptionRecipients = [sender].concat(recipients).validUnique(),
+			signingKey = sender ? OpenPGPUserStore.getPrivateKeyFor(sender) : null;
 
 		return {
-			recipients: recipients,
+			recipients: encryptionRecipients,
 			signingKey: signingKey,
-			ready: !!(recipients.length && signingKey && GnuPGUserStore.hasPublicKeyForEmails(recipients))
+			ready: !!(recipients.length && signingKey && OpenPGPUserStore.hasPublicKeyForEmails(encryptionRecipients))
 		};
 	}
 
-	syncInternalGnuPGPolicy() {
-		const state = this.internalGnuPGState();
+	syncAutomaticOpenPgpPolicy() {
+		const state = this.automaticOpenPgpState();
 
 		if (state.ready) {
 			const signOptions = this.signOptions(),
 				encryptOptions = this.encryptOptions();
 
-			if ('GnuPG' !== signOptions[0]?.[0] || state.signingKey !== signOptions[0][1]) {
-				this.signOptions([['GnuPG', state.signingKey]].concat(signOptions.filter(option => 'GnuPG' !== option[0])));
+			if ('OpenPGP' !== signOptions[0]?.[0] || state.signingKey !== signOptions[0][1]) {
+				this.signOptions([['OpenPGP', state.signingKey]].concat(signOptions.filter(option => 'OpenPGP' !== option[0])));
 			}
 
-			if ('GnuPG' !== encryptOptions[0]) {
-				this.encryptOptions(['GnuPG'].concat(encryptOptions.filter(option => 'GnuPG' !== option)));
+			if ('OpenPGP' !== encryptOptions[0]) {
+				this.encryptOptions(['OpenPGP'].concat(encryptOptions.filter(option => 'OpenPGP' !== option)));
 			}
 
-			this.internalGnuPGAuto = true;
+			this.automaticOpenPgpPolicy = true;
 			this.doSign(true);
 			this.doEncrypt(true);
-		} else if (this.internalGnuPGAuto) {
+		} else if (this.automaticOpenPgpPolicy) {
 			const identity = this.currentIdentity();
-			this.internalGnuPGAuto = false;
+			this.automaticOpenPgpPolicy = false;
 			this.doSign(identity?.pgpSign?.() || SettingsUserStore.pgpSign());
 			this.doEncrypt(identity?.pgpEncrypt?.() || SettingsUserStore.pgpEncrypt());
 		}
@@ -1518,26 +1512,23 @@ export class ComposePopupView extends AbstractViewPopup {
 		let options = [],
 			identity = this.currentIdentity(),
 			email = getEmail(this.from()),
-			key = GnuPGUserStore.getPrivateKeyFor(email, 1);
-		key && options.push(['GnuPG', key]);
-		key = OpenPGPUserStore.getPrivateKeyFor(email, 1);
+			key = OpenPGPUserStore.getPrivateKeyFor(email);
 		key && options.push(['OpenPGP', key]);
 		identity.smimeKeyValid() && identity.smimeCertificateValid() && identity.email === email
 			&& options.push(['S/MIME']);
 		console.dir({signOptions: options});
 		this.signOptions(options);
-		this.syncInternalGnuPGPolicy();
+		this.syncAutomaticOpenPgpPolicy();
 	}
 
-	async initEncrypt() {
-		const recipients = this.allRecipients(),
+	async initEncrypt(discover = true) {
+		const recipients = this.messageRecipients(),
 			options = [];
 
 		if (recipients.length) {
-			await GnuPGUserStore.discoverPublicKeysForEmails(recipients);
-
-			GnuPGUserStore.hasPublicKeyForEmails(recipients)
-			&& options.push('GnuPG');
+			if (discover && !OpenPGPUserStore.hasPublicKeyForEmails(recipients)) {
+				await OpenPGPUserStore.discoverPublicKeysForEmails(recipients, false, 2000);
+			}
 
 			OpenPGPUserStore.hasPublicKeyForEmails(recipients)
 			&& options.push('OpenPGP');
@@ -1552,7 +1543,7 @@ export class ComposePopupView extends AbstractViewPopup {
 				).length
 				&& options.push('S/MIME');
 
-			if (await MailvelopeUserStore.hasPublicKeyForEmails(recipients)) {
+				if (!options.includes('OpenPGP') && await MailvelopeUserStore.hasPublicKeyForEmails(recipients)) {
 				options.push('Mailvelope');
 			} else {
 				'mailvelope' === this.viewArea() && this.bodyArea();
@@ -1562,7 +1553,7 @@ export class ComposePopupView extends AbstractViewPopup {
 
 		console.dir({encryptOptions:options});
 		this.encryptOptions(options);
-		this.syncInternalGnuPGPolicy();
+		this.syncAutomaticOpenPgpPolicy();
 	}
 
 	async getMessageRequestParams(sSaveFolder, draft)
@@ -1624,30 +1615,81 @@ export class ComposePopupView extends AbstractViewPopup {
 			},
 			isHtml = this.oEditor.isHtml();
 		let
-			recipients = draft ? [identity.email] : this.allRecipients(),
-			internalGnuPG = false,
+			recipients = draft ? [identity.email] : this.messageRecipients(),
+			encryptionRecipients = recipients,
+			automaticOpenPgp = false,
+			missingOpenPgpRecipients = [],
 			signOptions,
 			encryptOptions;
+		const usePlaintextFallback = notice => {
+			if (draft) {
+				return;
+			}
+			automaticOpenPgp = false;
+			this.automaticOpenPgpPolicy = false;
+			this.signOptions([]);
+			this.encryptOptions([]);
+			this.doSign(false);
+			this.doEncrypt(false);
+			this.bodyArea();
+			this.plaintextFallbackPending = true;
+			this.plaintextNotice(notice || i18n('COMPOSE/OPENPGP_PLAINTEXT_NOTICE'));
+		};
 
-		if (!draft && await GnuPGUserStore.discoverPublicKeysForEmails(recipients)) {
-			await this.initEncrypt();
+		if (!draft) {
+			this.plaintextNotice('');
+			this.plaintextFallbackPending = false;
 		}
 
-		signOptions = (!draft && this.doSign() && this.signOptions()) || [];
-		encryptOptions = (this.doEncrypt() && this.encryptOptions()) || [];
-
-		if (!draft && this.internalDomainRecipients().length) {
-			const state = this.internalGnuPGState();
-			if (!state.ready) {
-				throw i18n('COMPOSE/ERROR_INTERNAL_GNUPG_REQUIRED');
+		let plaintextFallbackNotice = '';
+		if (!draft) {
+			const vaultReady = await PgpUserStore.ready();
+			if (OpenPGPUserStore.isSupported()) {
+				missingOpenPgpRecipients = await OpenPGPUserStore.missingPublishedPublicKeysForEmails(recipients, 2000);
 			}
+			if (vaultReady && !missingOpenPgpRecipients.length) {
+				try {
+					encryptionRecipients = this.encryptionRecipients();
+					await OpenPGPUserStore.ensureVault();
+					await OpenPGPUserStore.discoverPublicKeysForEmails(encryptionRecipients, false, 2000);
+					await this.initEncrypt(false);
 
-			internalGnuPG = true;
-			recipients = state.recipients;
-			signOptions = [['GnuPG', state.signingKey]];
-			encryptOptions = ['GnuPG'];
-			this.doSign(true);
-			this.doEncrypt(true);
+					const state = this.automaticOpenPgpState();
+					if (state.ready) {
+						automaticOpenPgp = true;
+						recipients = state.recipients;
+						encryptionRecipients = recipients;
+						signOptions = [['OpenPGP', state.signingKey]];
+						encryptOptions = ['OpenPGP'];
+						this.doSign(true);
+						this.doEncrypt(true);
+					}
+				} catch (error) {
+					plaintextFallbackNotice = i18n('COMPOSE/OPENPGP_PLAINTEXT_VAULT_NOTICE', {
+						ERROR: error?.message || OpenPGPUserStore.vaultError() || 'temporarily unavailable'
+					});
+				}
+			}
+			if (!automaticOpenPgp && !plaintextFallbackNotice) {
+				plaintextFallbackNotice = missingOpenPgpRecipients.length
+					? i18n('COMPOSE/OPENPGP_PLAINTEXT_RECIPIENTS_NOTICE', {
+						RECIPIENTS: missingOpenPgpRecipients.join(', ')
+					})
+					: i18n('COMPOSE/OPENPGP_PLAINTEXT_VAULT_NOTICE', {
+						ERROR: OpenPGPUserStore.vaultError() || (vaultReady
+							? 'The sender encryption key is not ready'
+							: 'Preparing the browser encryption vault')
+					});
+			}
+		}
+		if (!automaticOpenPgp) {
+			// A fresh WKD miss (or unavailable local vault) means one whole plaintext message.
+			// Do not partially encrypt, reuse a stale key, or stop normal mail delivery.
+			if (!draft) {
+				usePlaintextFallback(plaintextFallbackNotice);
+			}
+			signOptions = draft ? ((this.doSign() && this.signOptions()) || []) : [];
+			encryptOptions = draft ? ((this.doEncrypt() && this.encryptOptions()) || []) : [];
 		}
 
 		if (isHtml) {
@@ -1674,7 +1716,15 @@ export class ComposePopupView extends AbstractViewPopup {
 			params.plain = Text;
 		}
 
-		if (this.mailvelope && 'mailvelope' === this.viewArea()) {
+		// Browser OpenPGP cannot currently build an encrypted MIME tree with attachments.
+		// Keep delivery reliable by warning and sending the original plaintext message.
+		if (!draft && automaticOpenPgp && (hasAttachments || !Text.length)) {
+			usePlaintextFallback(i18n('COMPOSE/OPENPGP_PLAINTEXT_ATTACHMENT_NOTICE'));
+			signOptions = [];
+			encryptOptions = [];
+		}
+
+		if (draft && this.mailvelope && 'mailvelope' === this.viewArea()) {
 			params.encrypted = draft
 				? await this.mailvelope.createDraft()
 				: await this.mailvelope.encrypt(recipients);
@@ -1683,10 +1733,7 @@ export class ComposePopupView extends AbstractViewPopup {
 				params.autocrypt.push({addr:k, keydata:v.replace(/-----(BEGIN|END) PGP PUBLIC KEY BLOCK-----/g).trim()})
 			);
 */
-		} else if (signOptions.length || encryptOptions.length) {
-			if (!draft && !hasAttachments && !Text.length) {
-				throw i18n('COMPOSE/ERROR_EMPTY_BODY');
-			}
+		} else if (signOptions.length || encryptOptions.length) try {
 			let data = new MimePart;
 			data.headers['Content-Type'] = 'text/'+(isHtml?'html':'plain')+'; charset="utf-8"';
 			data.headers['Content-Transfer-Encoding'] = 'base64';
@@ -1706,42 +1753,27 @@ export class ComposePopupView extends AbstractViewPopup {
 			let isSigned = false;
 			for (let i = 0; i < signOptions.length; ++i) {
 				if ('OpenPGP' == signOptions[i][0]) {
-					try {
-						// Doesn't sign attachments
-						let signed = new MimePart;
-						signed.headers['Content-Type'] =
-							'multipart/signed; micalg="pgp-sha256"; protocol="application/pgp-signature"';
-						signed.headers['Content-Transfer-Encoding'] = '7Bit';
-						signed.children.push(data);
-						let signature = new MimePart;
-						signature.headers['Content-Type'] = 'application/pgp-signature; name="signature.asc"';
-						signature.headers['Content-Transfer-Encoding'] = '7Bit';
-						signature.body = await OpenPGPUserStore.sign(data.toString(), signOptions[i][1], 1);
-						signed.children.push(signature);
-						isSigned = true;
-						params.html = params.plain = '';
-						params.signed = signed.toString();
-						params.boundary = signed.boundary;
-						data = signed;
+					// Doesn't sign attachments
+					let signed = new MimePart;
+					signed.headers['Content-Type'] =
+						'multipart/signed; micalg="pgp-sha256"; protocol="application/pgp-signature"';
+					signed.headers['Content-Transfer-Encoding'] = '7Bit';
+					signed.children.push(data);
+					let signature = new MimePart;
+					signature.headers['Content-Type'] = 'application/pgp-signature; name="signature.asc"';
+					signature.headers['Content-Transfer-Encoding'] = '7Bit';
+					signature.body = await OpenPGPUserStore.sign(data.toString(), signOptions[i][1], 1);
+					signed.children.push(signature);
+					isSigned = true;
+					params.html = params.plain = '';
+					params.signed = signed.toString();
+					params.boundary = signed.boundary;
+					data = signed;
 /*
 						Object.entries(PgpUserStore.getPublicKeyOfEmails([getEmail(this.from())]) || {})
 						.forEach(([k,v]) => params.publicKey = v);
 */
-						break;
-					} catch (e) {
-						console.error(e);
-					}
-				} else if ('GnuPG' == signOptions[i][0]) {
-					// TODO: sign in PHP fails
-					let pass = await GnuPGUserStore.sign(signOptions[i][1], internalGnuPG);
-					if (null != pass) {
-//						params.signData = data.toString();
-						params.signFingerprint = signOptions[i][1].fingerprint;
-						params.signPassphrase = pass;
-//						params.attachPublicKey = false;
-						isSigned = true;
-						break;
-					}
+					break;
 				} else if ('S/MIME' == signOptions[i][0]) {
 					// TODO: sign in PHP fails
 					params.sign = 'S/MIME';
@@ -1766,8 +1798,13 @@ export class ComposePopupView extends AbstractViewPopup {
 			}
 
 			if (encryptOptions.length) {
-				const autocrypt = () =>
-					Object.entries(PgpUserStore.getPublicKeyOfEmails(recipients) || {}).forEach(([k,v]) =>
+				if (hasAttachments) {
+					throw Error(
+						'Browser-only OpenPGP encryption cannot send attachments until encrypted attachment MIME support is enabled'
+					);
+				}
+				const autocrypt = async () =>
+					Object.entries(await PgpUserStore.getPublicKeyOfEmails(recipients) || {}).forEach(([k,v]) =>
 						params.autocrypt.push({
 							addr: k,
 							keydata: v.replace(/-----(BEGIN|END) PGP PUBLIC KEY BLOCK-----/g, '').trim()
@@ -1776,15 +1813,9 @@ export class ComposePopupView extends AbstractViewPopup {
 				for (let i = 0; i < encryptOptions.length; ++i) {
 					if ('OpenPGP' == encryptOptions[i]) {
 						// Doesn't encrypt attachments
-						params.encrypted = await OpenPGPUserStore.encrypt(data.toString(), recipients);
+						params.encrypted = await OpenPGPUserStore.encrypt(data.toString(), encryptionRecipients);
 						params.signed = '';
-						autocrypt();
-						break;
-					}
-					if ('GnuPG' == encryptOptions[i]) {
-						// Does encrypt attachments
-						params.encryptFingerprints = JSON.stringify(GnuPGUserStore.getPublicKeyFingerprints(recipients));
-						autocrypt();
+						await autocrypt();
 						break;
 					}
 					if ('S/MIME' == encryptOptions[i]) {
@@ -1796,9 +1827,28 @@ export class ComposePopupView extends AbstractViewPopup {
 						});
 						break;
 					}
-					// We skip Mailvelope as it has its own window
+				// We skip Mailvelope as it has its own window
 				}
 			}
+		} catch (error) {
+			if (draft || !automaticOpenPgp) {
+				throw error;
+			}
+			delete params.encrypted;
+			delete params.signed;
+			delete params.boundary;
+			delete params.sign;
+			delete params.signPassphrase;
+			delete params.encryptCertificates;
+			params.autocrypt = [];
+			if (isHtml) {
+				params.html = Text;
+				params.plain = htmlToPlain(Text);
+			} else {
+				delete params.html;
+				params.plain = Text;
+			}
+			usePlaintextFallback(i18n('COMPOSE/OPENPGP_PLAINTEXT_ENCRYPTION_NOTICE'));
 		}
 
 		return params;

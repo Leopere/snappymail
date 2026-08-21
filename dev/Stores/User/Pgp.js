@@ -1,12 +1,5 @@
 import { SettingsCapa, SettingsGet } from 'Common/Globals';
-//import { staticLink } from 'Common/Links';
 
-//import { showScreenPopup } from 'Knoin/Knoin';
-
-//import { EmailModel } from 'Model/Email';
-//import { OpenPgpKeyModel } from 'Model/OpenPgpKey';
-
-import { GnuPGUserStore } from 'Stores/User/GnuPG';
 import { OpenPGPUserStore } from 'Stores/User/OpenPGP';
 import { MailvelopeUserStore } from 'Stores/User/Mailvelope';
 
@@ -14,136 +7,154 @@ import Remote from 'Remote/User/Fetch';
 
 export const
 	BEGIN_PGP_MESSAGE = '-----BEGIN PGP MESSAGE-----',
-//	BEGIN_PGP_SIGNATURE = '-----BEGIN PGP SIGNATURE-----',
-//	BEGIN_PGP_SIGNED = '-----BEGIN PGP SIGNED MESSAGE-----',
-//	BEGIN_PGP_PUBLIC_KEY = '-----BEGIN PGP PUBLIC KEY BLOCK-----',
-//	END_PGP_PUBLIC_KEY = '-----END PGP PUBLIC KEY BLOCK-----',
+	BEGIN_PGP_SIGNED_MESSAGE = '-----BEGIN PGP SIGNED MESSAGE-----',
 
 	PgpUserStore = new class {
-		constructor() {
-			this.loginPassword = null;
+	constructor() {
+		this.readyPromise = Promise.resolve(false);
+		this.initialized = false;
+		this.loginEmail = '';
+		this.loginPassword = '';
+	}
+
+		setLoginPassword(email, password) {
+			this.loginEmail = IDN.toASCII((email || '').trim()).toLowerCase();
+			this.loginPassword = password || '';
 		}
 
-		rememberLoginPassword(email, password) {
-			this.loginPassword = email && password ? { email, password } : null;
+	takeLoginPassword(email) {
+		email = IDN.toASCII((email || '').trim()).toLowerCase();
+		// Login plugins may canonicalize an alias after authentication. The password
+		// belongs to this just-authenticated browser transition, not to the typed alias.
+		const password = email ? this.loginPassword : '';
+		this.loginEmail = '';
+		this.loginPassword = '';
+		return password;
+	}
+
+	init() {
+		if (this.initialized) {
+			return this.readyPromise;
 		}
-
-		init() {
-			const initKeyrings = () =>
-				this.loadKeyrings()
-					.then(() => this.bootstrapGnuPGFromLogin());
-
-			if (SettingsCapa('OpenPGP') && window.crypto && crypto.getRandomValues) {
-				rl.loadScript(SettingsGet('StaticLibsJs').replace('/libs.', '/openpgp.'))
-//				rl.loadScript(staticLink('js/min/openpgp.min.js'))
-					.then(initKeyrings)
-					.catch(e => {
-						initKeyrings();
-						console.error(e);
-					});
-			} else {
-				initKeyrings();
-			}
-		}
-
-		loadKeyrings(identifier) {
-			MailvelopeUserStore.loadKeyring(identifier);
-			const openPgpReady = OpenPGPUserStore.loadKeyrings() || Promise.resolve(),
-				gnuPgpReady = GnuPGUserStore.loadKeyrings() || Promise.resolve();
-			return Promise.all([openPgpReady, gnuPgpReady]);
-		}
-
-		bootstrapGnuPGFromLogin() {
-			const credentials = this.loginPassword;
-			this.loginPassword = null;
-			if (!credentials || !GnuPGUserStore.isSupported()) {
-				return Promise.resolve();
-			}
-
-			return GnuPGUserStore.ensureKeyForLogin(credentials.email, credentials.password);
-		}
-
-		/**
-		 * @returns {boolean}
-		 */
-		isSupported() {
-			return !!(OpenPGPUserStore.isSupported() || GnuPGUserStore.isSupported() || window.mailvelope);
-		}
-
-		/**
-		 * @returns {boolean}
-		 */
-		isEncrypted(text) {
-			return 0 === text.trim().indexOf(BEGIN_PGP_MESSAGE);
-		}
-
-		importKey(key, gnuPG, backup) {
-			if (gnuPG || backup) {
-				Remote.request('PgpImportKey',
-					(iError, oData) => {
-						if (gnuPG && oData?.Result/* && (oData.Result.imported || oData.Result.secretimported)*/) {
-							GnuPGUserStore.loadKeyrings();
-						}
-						iError && alert(oData.message);
-					}, {
-						key, gnuPG, backup
+		this.initialized = true;
+		const email = SettingsGet('Email'),
+			loadLibrary = SettingsCapa('OpenPGP') && window.crypto && crypto.getRandomValues,
+			openPgpLibrary = SettingsGet('StaticLibsJs').replace('/libs.', '/openpgp.');
+		let loginPassword = this.takeLoginPassword(email);
+		const loadKeyrings = () => this.loadKeyrings(email, loginPassword),
+			wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+			loadClientLibrary = async () => {
+				if (!loadLibrary) {
+					return;
+				}
+				try {
+					await rl.loadScript(openPgpLibrary);
+				} catch (error) {
+					console.error('OpenPGP client library load failed', error);
+					await wait(250);
+					await rl.loadScript(openPgpLibrary);
+				}
+			},
+			bootstrapVault = async () => {
+				let error;
+				for (let attempt = 0; attempt < 3; ++attempt) try {
+					return await loadKeyrings();
+				} catch (reason) {
+					error = reason;
+					if (!reason?.openPgpVaultReadFailure || 2 === attempt) {
+						throw reason;
 					}
-				);
-			}
-			OpenPGPUserStore.importKey(key);
+					await wait(250);
+				}
+				throw error;
+			};
+		this.readyPromise = loadClientLibrary()
+			.then(bootstrapVault)
+			.finally(() => loginPassword = '');
+		return this.readyPromise;
+	}
+
+	ready() {
+		return (this.initialized ? this.readyPromise : this.init())
+			.then(() => OpenPGPUserStore.isVaultReady() && 0 < OpenPGPUserStore.privateKeys().length)
+			.catch(() => false);
+	}
+
+		loadKeyrings(identifier, loginPassword = '') {
+			MailvelopeUserStore.loadKeyring(identifier);
+			return OpenPGPUserStore.loadKeyrings(identifier, loginPassword);
 		}
 
-		/**
-		 * Checks if verifying/encrypting a message is possible with given email addresses.
-		 * Returns the first library that can.
-		 */
+		forgetSessionSecrets() {
+			this.loginEmail = '';
+			this.loginPassword = '';
+			OpenPGPUserStore.lock();
+		}
+
+		isSupported() {
+			return !!(OpenPGPUserStore.isSupported() || window.mailvelope);
+		}
+
+		isEncrypted(text) {
+			return 0 === (text || '').trim().indexOf(BEGIN_PGP_MESSAGE);
+		}
+
+		hasEncryptedArmor(text) {
+			return (text || '').includes(BEGIN_PGP_MESSAGE);
+		}
+
+		importKey(key/*, gnuPG, backup*/) {
+			return OpenPGPUserStore.importKey(key);
+		}
+
 		hasPublicKeyForEmails(recipients) {
-			if (recipients.length) {
-				if (GnuPGUserStore.hasPublicKeyForEmails(recipients)) {
-					return 'gnupg';
-				}
-				if (OpenPGPUserStore.hasPublicKeyForEmails(recipients)) {
-					return 'openpgp';
-				}
-			}
-			return false;
+			return OpenPGPUserStore.hasPublicKeyForEmails(recipients) ? 'openpgp' : false;
+		}
+
+		async discoverPublicKeysForEmails(recipients, refresh = false, timeout = 2000) {
+			return OpenPGPUserStore.discoverPublicKeysForEmails(recipients, refresh, timeout);
 		}
 
 		async decrypt(message) {
-			const armoredText = message.plain();
-			if (!this.isEncrypted(armoredText)) {
-				throw Error('Not armored text');
+			let armoredText = message.plain();
+			if (!message.pgpEncrypted() && !this.isEncrypted(armoredText)) {
+				throw Error('Not an OpenPGP encrypted message');
 			}
-
-			// Invisible internal crypto uses only the server-stored GnuPG keyring.
-			return GnuPGUserStore.decrypt(message);
+			if (!this.isEncrypted(armoredText)) {
+				try {
+					const response = await Remote.post('PgpFetchEncryptedMessage', null, {
+						folder: message.folder,
+						uid: message.uid,
+						partId: message.pgpEncrypted()?.partId || ''
+					}, 8000);
+					armoredText = response?.Result || '';
+				} catch (error) {
+					const retryable = Error(error?.message || 'Encrypted message data is temporarily unavailable');
+					retryable.openPgpTransient = true;
+					throw retryable;
+				}
+			}
+			if (!this.isEncrypted(armoredText)) {
+				const retryable = Error('Encrypted message data is temporarily unavailable');
+				retryable.openPgpTransient = true;
+				throw retryable;
+			}
+			const sender = message.from[0]?.email || '';
+			sender && await OpenPGPUserStore.discoverPublicKey(sender, false).catch(() => null);
+			return OpenPGPUserStore.decrypt(armoredText, sender);
 		}
 
 		async verify(message) {
-			const signed = message.pgpSigned(),
-				sender = message.from[0].email;
-			if (signed && GnuPGUserStore.hasPublicKeyForEmails([sender])) {
-				return GnuPGUserStore.verify(message);
-			}
+			return OpenPGPUserStore.verify(message);
 		}
 
-		getPublicKeyOfEmails(recipients) {
-			if (recipients.length) {
-				let result = {};
-				recipients.forEach(email => {
-					OpenPGPUserStore.publicKeys().forEach(key => {
-						if (key.for(email)) {
-							result[email] = key.armor;
-						}
-					});
-					GnuPGUserStore.publicKeys.map(async key => {
-						if (!result[email] && key.for(email)) {
-							result[email] = await key.fetch();
-						}
-					});
-				});
-				return result;
-			}
-			return false;
+		async getPublicKeyOfEmails(recipients) {
+			await OpenPGPUserStore.discoverPublicKeysForEmails(recipients, false, 2000);
+			const result = {};
+			(recipients || []).forEach(email => {
+				const key = OpenPGPUserStore.publicKeys().find(item => item.for(email));
+				key && (result[email] = key.armor);
+			});
+			return Object.keys(result).length ? result : false;
 		}
 	};

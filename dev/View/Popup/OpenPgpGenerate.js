@@ -1,113 +1,50 @@
 import { addObservablesTo } from 'External/ko';
-//import { pInt } from 'Common/Utils';
 
-import { GnuPGUserStore } from 'Stores/User/GnuPG';
 import { OpenPGPUserStore } from 'Stores/User/OpenPGP';
-
-import { IdentityUserStore } from 'Stores/User/Identity';
 
 import { AbstractViewPopup } from 'Knoin/AbstractViews';
 
-import { SettingsCapa } from 'Common/Globals';
+import { SettingsGet } from 'Common/Globals';
 
 export class OpenPgpGeneratePopupView extends AbstractViewPopup {
 	constructor() {
 		super('OpenPgpGenerate');
 
-		this.identities = IdentityUserStore;
-
 		addObservablesTo(this, {
 			email: '',
 			emailError: false,
-
-			name: '',
-			password: '',
-			keyType: 'ECC',
-
 			submitRequest: false,
-			submitError: '',
-
-			backupPublicKey: true,
-			backupPrivateKey: false,
-
-			saveGnuPGPublic: true,
-			saveGnuPGPrivate: false
+			submitError: ''
 		});
-
-		this.canGnuPG = SettingsCapa('GnuPG');
 
 		this.email.subscribe(() => this.emailError(false));
 	}
 
-	submitForm() {
-		const type = this.keyType().toLowerCase(),
-			userId = {
-				name: this.name(),
-				email: IDN.toASCII(this.email())
-			},
-			cfg = {
-				type: type,
-				userIDs: [userId],
-				passphrase: this.password().trim()
-//				format: 'armored' // output key format, defaults to 'armored' (other options: 'binary' or 'object')
-			}
-/*
-		if ('ecc' === type) {
-			cfg.curve = 'curve25519';
-		} else {
-			cfg.rsaBits = pInt(this.keyBitLength());
-		}
-*/
-		this.emailError(!this.email().trim());
+	async submitForm() {
+		const email = IDN.toASCII(this.email().trim()).toLowerCase();
+		this.emailError(!email || email !== IDN.toASCII(SettingsGet('Email') || '').toLowerCase());
 		if (this.emailError()) {
+			this.submitError('The encrypted vault must belong to the signed-in mailbox.');
 			return;
 		}
-
 		this.submitRequest(true);
 		this.submitError('');
-
-		openpgp.generateKey(cfg).then(async keyPair => {
-			if (keyPair) {
-				const fn = () => {
-					this.submitRequest(false);
-					this.close();
-				};
-
-				await OpenPGPUserStore.storeKeyPair(keyPair, cfg.passphrase);
-
-				keyPair.onServer = (this.backupPublicKey() ? 1 : 0) + (this.backupPrivateKey() ? 2 : 0);
-				keyPair.inGnuPG = (this.saveGnuPGPublic() ? 1 : 0) + (this.saveGnuPGPrivate() ? 2 : 0);
-				if (keyPair.onServer || keyPair.inGnuPG) {
-					if (!this.backupPrivateKey() && !this.saveGnuPGPrivate()) {
-						delete keyPair.privateKey;
-					}
-					GnuPGUserStore.storeKeyPair(keyPair, fn);
-				} else {
-					fn();
-				}
-			}
-		})
-		.catch((e) => {
+		try {
+			await OpenPGPUserStore.ensureVault();
+			this.close();
+		} catch (error) {
+			this.submitError(error?.message || 'Unable to create the encrypted key vault.');
+		} finally {
 			this.submitRequest(false);
-			this.showError(e);
-		});
+		}
 	}
 
 	hideError() {
 		this.submitError('');
 	}
 
-	showError(e) {
-		console.log(e);
-		if (e?.message) {
-			this.submitError(e.message);
-		}
-	}
-
 	onShow() {
-		this.name(''/*IdentityUserStore()[0].name*/);
-		this.password('');
-		this.email(''/*IdentityUserStore()[0].email*/);
+		this.email(SettingsGet('Email') || '');
 		this.emailError(false);
 		this.submitError('');
 	}

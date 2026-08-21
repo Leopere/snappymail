@@ -1,0 +1,49 @@
+RockSign integration for the private BoomPay document-signing instance.
+
+Configure the plugin under Admin → Packages → RockSign:
+
+- API token: a dedicated RockSign admin or editor token, encrypted at rest.
+- Authorized mailboxes: exact mailbox addresses allowed to use Contracts.
+- Allowed template IDs: exact existing RockSign template IDs users may send.
+
+The project Docker image installs this managed local plugin into the persistent
+SnappyMail data volume at startup. An administrator still decides whether to
+enable it and supplies all credentials and allowlists in the admin interface.
+The Compose stack defaults PHP to 256 MB so the bounded 25 MB PDF input and
+30 MB signed-output paths have enough space for base64 and JSON overhead.
+
+Save the configuration, reopen the plugin settings, and use “Test saved
+connection.” The API origin is deliberately fixed at https://sign.boompay.ca.
+The token and allowlists are never exposed to browser JavaScript.
+The connection test rejects viewer tokens and confirms both submission-create
+and PDF-signing capabilities.
+
+Authorized users receive one Contracts menu beside Attach in Compose. It can
+request signatures, certify an attached PDF, attach a completed contract, or
+verify the exact bytes of an attached PDF. Signed and completed PDFs are
+cryptographically rechecked through the authenticated RockSign verifier before
+SnappyMail stages them as account-scoped attachments. The public verifier URL
+is shown to recipients, but server checks do not consume its per-IP rate limit.
+
+Completed-contract discovery uses an opaque, mailbox-bound `external_id` and
+RockSign's exact server-side filter. The proof is revalidated before any file
+URL is returned or downloaded, so one authorized mailbox cannot retrieve
+another mailbox's contracts through the shared integration token.
+
+Submission creation is never retried automatically. If RockSign does not
+return a response, SnappyMail reports the status as unknown so an operator can
+check RockSign before attempting another request.
+
+Local SnappyMail invitation delivery is deliberately restricted to one signer.
+It requires an explicit confirmation before replacing To/Cc/Bcc, preserves an
+in-dialog undo snapshot of the draft, and blocks closing or reopening the
+singleton popup while a mutating request is in flight.
+
+A certified PDF proves that its exact bytes carry a trusted assertion from this
+RockSign instance. It is not evidence that a human accepted a contract and it
+does not encrypt the email. RockSign templates provide human signature flows.
+
+OpenPGP discovery remains separate. The `_openpgpkey.<identity-domain>` TXT
+record points to the domain's hashed WKD manifest; it never points to RockSign.
+When SnappyMail sends a signing link, the normal Compose WKD policy determines
+whether that invitation email can be encrypted.

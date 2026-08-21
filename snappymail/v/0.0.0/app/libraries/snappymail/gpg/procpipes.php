@@ -42,11 +42,11 @@ class ProcPipes
 
 	public function close(int $number) : void
 	{
-		if (\array_key_exists($number, $this->pipes)) {
+		if (\array_key_exists($number, $this->pipes) && \is_resource($this->pipes[$number])) {
 			\fflush($this->pipes[$number]);
 			\fclose($this->pipes[$number]);
-			unset($this->pipes[$number]);
 		}
+		unset($this->pipes[$number]);
 	}
 
 	private $buffers = [];

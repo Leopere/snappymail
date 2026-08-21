@@ -7,6 +7,8 @@ import { $htmlCL, SettingsGet, fireEvent } from 'Common/Globals';
 import { ThemeStore } from 'Stores/Theme';
 import { FolderUserStore } from 'Stores/User/Folder';
 
+const sessionTimeout = value => Math.max(5, Math.min(1440, pInt(value) || 30));
+
 export const SettingsUserStore = new class {
 	constructor() {
 		const self = this;
@@ -29,15 +31,18 @@ export const SettingsUserStore = new class {
 			listGrouped: 0,
 			showNextMessage: 0,
 			allowDraftAutosave: 1,
-			useThreads: 0,
+			useThreads: 1,
 			defaultSort: '',
-			threadAlgorithm: '',
+			smartArchiveEnabled: 0,
+			categoryFolderRoutes: '',
+			threadAlgorithm: 'REFS',
 			replySameFolder: 0,
 			hideUnsubscribed: 0,
 			hideDeleted: 1,
 			unhideKolabFolders: 0,
-			autoLogout: 0,
-			keyPassForget: 15,
+			autoLogout: 30,
+			autoLogoutDisabled: 0,
+			keyPassForget: 30,
 			showUnreadCount: 0,
 			messageNewWindow: 0,
 			messageReadAuto: 0,
@@ -73,13 +78,22 @@ export const SettingsUserStore = new class {
 		let iAutoLogoutTimer;
 		self.delayLogout = (() => {
 			clearTimeout(iAutoLogoutTimer);
-			if (0 < self.autoLogout() && !SettingsGet('accountSignMe')) {
+			if (!self.autoLogoutDisabled() && 0 < self.autoLogout()) {
 				iAutoLogoutTimer = setTimeout(
 					rl.app.logout,
 					self.autoLogout() * 60000
 				);
 			}
 		}).throttle(5000);
+		self.autoLogout.subscribe(value => {
+			clearTimeout(iAutoLogoutTimer);
+			self.keyPassForget(sessionTimeout(value));
+			self.delayLogout();
+		});
+		self.autoLogoutDisabled.subscribe(() => {
+			clearTimeout(iAutoLogoutTimer);
+			self.delayLogout();
+		});
 	}
 
 	init() {
@@ -106,6 +120,8 @@ export const SettingsUserStore = new class {
 			'AllowDraftAutosave',
 			'useThreads',
 			'defaultSort',
+			'SmartArchiveEnabled',
+			'CategoryFolderRoutes',
 			'threadAlgorithm',
 			'ReplySameFolder',
 			'HideUnsubscribed',
@@ -154,6 +170,11 @@ export const SettingsUserStore = new class {
 */
 		].forEach(name => {
 			let value = SettingsGet(name);
+			if ('threadAlgorithm' === name) {
+				value = ['REFS', 'REFERENCES', 'ORDEREDSUBJECT'].includes(String(value).toUpperCase())
+					? String(value).toUpperCase()
+					: 'REFS';
+			}
 			name = name[0].toLowerCase() + name.slice(1);
 			self[name](value);
 		});
@@ -162,8 +183,9 @@ export const SettingsUserStore = new class {
 		self.messagesPerPage(pInt(SettingsGet('MessagesPerPage')));
 		self.checkMailInterval(pInt(SettingsGet('CheckMailInterval')));
 		self.messageReadDelay(pInt(SettingsGet('MessageReadDelay')));
-		self.autoLogout(pInt(SettingsGet('AutoLogout')));
-		self.keyPassForget(pInt(SettingsGet('keyPassForget')));
+		self.autoLogout(sessionTimeout(SettingsGet('AutoLogout')));
+		self.autoLogoutDisabled(!!SettingsGet('AutoLogoutDisabled'));
+		self.keyPassForget(self.autoLogout());
 
 		FolderUserStore.sortMode(self.defaultSort());
 	}

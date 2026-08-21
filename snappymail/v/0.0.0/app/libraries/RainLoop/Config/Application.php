@@ -328,10 +328,11 @@ Values:
   "always" - show always'),
 				'contacts_autosave'      => array(true),
                 'mail_list_grouped'      => array(false),
-                'mail_use_threads'       => array(false),
+                'mail_use_threads'       => array(true),
 				'allow_draft_autosave'   => array(true),
 				'mail_reply_same_folder' => array(false),
 				'msg_default_action'     => array(1, '1 - reply, 2 - reply all'),
+				'request_read_receipt'   => array(true, 'Request a read receipt on newly composed messages by default'),
                 'collapse_blockquotes'   => array(true),
                 'allow_spellcheck'       => array(false)
 			),
@@ -420,10 +421,11 @@ Enables caching in the system'),
 
 				'server_uids' => array(true, 'Caching message UIDs when searching and sorting (threading)'),
 
-				'system_data' => array(true)
+				'system_data' => array(false)
 			),
 
 			'imap' => array(
+				'timeout' => array(8, 'IMAP socket timeout in seconds'),
 				'use_force_selection' => array(false),
 				'use_expunge_all_on_delete' => array(false),
 				'message_list_fast_simple_search' => array(true),

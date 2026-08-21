@@ -89,6 +89,8 @@ abstract class Header
 		X_MSMAIL_PRIORITY = 'X-MSMail-Priority',
 		IMPORTANCE = 'Importance',
 		X_PRIORITY = 'X-Priority',
+		AUTO_SUBMITTED = 'Auto-Submitted',
+		PRECEDENCE = 'Precedence',
 
 		// https://autocrypt.org/level1.html#the-autocrypt-header
 		AUTOCRYPT = 'Autocrypt',
@@ -99,5 +101,6 @@ abstract class Header
 		// https://www.ietf.org/archive/id/draft-brand-indicators-for-message-identification-04.html#bimi-selector
 		BIMI_SELECTOR = 'BIMI-Selector',
 
+		LIST_ID = 'List-Id',
 		LIST_UNSUBSCRIBE = 'List-Unsubscribe';
 }

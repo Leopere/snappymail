@@ -13,12 +13,30 @@ abstract class Wkd
 
 	public static function normalizeDomain(string $domain) : string
 	{
-		$domain = \strtolower(\trim($domain, " \t\n\r\0\x0B."));
-		$domain = \preg_replace('/:\d+$/', '', $domain);
-		if (\str_starts_with($domain, 'openpgpkey.')) {
-			$domain = \substr($domain, 11);
+		if (\preg_match('/:\d+$/', \trim($domain))) {
+			return '';
 		}
-		return \preg_match('/^[a-z0-9.-]+$/', $domain) ? $domain : '';
+		return static::normalizeHost($domain);
+	}
+
+	public static function normalizeHost(string $host) : string
+	{
+		$domain = \strtolower(\trim($host, " \t\n\r\0\x0B."));
+		$domain = \preg_replace('/:\d+$/', '', $domain);
+		if (!$domain || 253 < \strlen($domain) || false !== \filter_var($domain, FILTER_VALIDATE_IP)) {
+			return '';
+		}
+		$labels = \explode('.', $domain);
+		if (2 > \count($labels)) {
+			return '';
+		}
+		foreach ($labels as $label) {
+			if (!$label || 63 < \strlen($label)
+				|| !\preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/', $label)) {
+				return '';
+			}
+		}
+		return $domain;
 	}
 
 	public static function emailParts(string $email) : ?array
@@ -51,6 +69,84 @@ abstract class Wkd
 		return $result;
 	}
 
+	public static function emailHash(string $email) : string
+	{
+		$parts = static::emailParts($email);
+		if (!$parts) {
+			return '';
+		}
+		return \hash('sha256', $parts[0] . '@' . $parts[1]);
+	}
+
+	public static function urlAllowed(string $url, string $domain) : bool
+	{
+		$parts = \parse_url($url);
+		if (!\is_array($parts)
+			|| 'https' !== \strtolower((string) ($parts['scheme'] ?? ''))
+			|| !empty($parts['user'])
+			|| !empty($parts['pass'])
+			|| !empty($parts['query'])
+			|| !empty($parts['fragment'])
+			|| (isset($parts['port']) && 443 !== (int) $parts['port'])) {
+			return false;
+		}
+
+		$host = static::normalizeHost((string) ($parts['host'] ?? ''));
+		$domain = static::normalizeDomain($domain);
+		$path = (string) ($parts['path'] ?? '');
+		if (!$host || !$domain || !\str_starts_with($path, '/.well-known/openpgpkey/')) {
+			return false;
+		}
+
+		$advancedPath = '/.well-known/openpgpkey/' . $domain . '/';
+		$directPath = '/.well-known/openpgpkey/';
+		$directFile = $path === $directPath . 'index.json'
+			|| $path === $directPath . 'policy'
+			|| \str_starts_with($path, $directPath . 'hu/');
+		return ($host === $domain && $directFile)
+			|| ($host === 'openpgpkey.' . $domain && \str_starts_with($path, $advancedPath));
+	}
+
+	public static function manifestUrlAllowed(string $url, string $domain) : bool
+	{
+		$parts = \parse_url($url);
+		if (!\is_array($parts)
+			|| 'https' !== \strtolower((string) ($parts['scheme'] ?? ''))
+			|| !empty($parts['user'])
+			|| !empty($parts['pass'])
+			|| !empty($parts['query'])
+			|| !empty($parts['fragment'])
+			|| (isset($parts['port']) && 443 !== (int) $parts['port'])) {
+			return false;
+		}
+
+		$host = static::normalizeHost((string) ($parts['host'] ?? ''));
+		$domain = static::normalizeDomain($domain);
+		$path = (string) ($parts['path'] ?? '');
+		return $host && $domain && \str_starts_with($path, '/')
+			&& ($host === $domain
+				|| $host === 'openpgpkey.' . $domain
+				|| \str_ends_with($host, '.' . $domain));
+	}
+
+	public static function keyUrlAllowed(string $url, string $domain, string $wkdHash) : bool
+	{
+		$domain = static::normalizeDomain($domain);
+		$wkdHash = \strtolower(\trim($wkdHash));
+		if (!$domain
+			|| !\preg_match('/^[ybndrfg8ejkmcpqxot1uwisza345h769]{32}$/', $wkdHash)
+			|| !static::urlAllowed($url, $domain)) {
+			return false;
+		}
+
+		$parts = \parse_url($url);
+		$host = static::normalizeHost((string) ($parts['host'] ?? ''));
+		$path = (string) ($parts['path'] ?? '');
+		return ($host === $domain && "/.well-known/openpgpkey/hu/{$wkdHash}" === $path)
+			|| ($host === 'openpgpkey.' . $domain
+				&& "/.well-known/openpgpkey/{$domain}/hu/{$wkdHash}" === $path);
+	}
+
 	public static function publicKeyPath(string $domain, string $hash) : string
 	{
 		$domain = static::normalizeDomain($domain);
@@ -59,6 +155,94 @@ abstract class Wkd
 			return '';
 		}
 		return APP_PRIVATE_DATA . 'openpgpkey/' . $domain . '/hu/' . $hash;
+	}
+
+	public static function manifestPath(string $domain) : string
+	{
+		$domain = static::normalizeDomain($domain);
+		return $domain ? APP_PRIVATE_DATA . 'openpgpkey/' . $domain . '/index.json' : '';
+	}
+
+	public static function manifest(string $domain, string $baseUrl = '') : array
+	{
+		$domain = static::normalizeDomain($domain);
+		$path = $domain ? static::manifestPath($domain) : '';
+		$data = ($path && \is_file($path)) ? \json_decode((string) \file_get_contents($path), true) : null;
+		$entries = \is_array($data['entries'] ?? null) ? $data['entries'] : [];
+		$baseUrl = \rtrim($baseUrl, '/');
+
+		$filtered = [];
+		foreach ($entries as $entry) {
+			$emailHash = \strtolower((string) ($entry['email_hash'] ?? ''));
+			$wkdHash = \strtolower((string) ($entry['wkd_hash'] ?? ''));
+			if (!\preg_match('/^[a-f0-9]{64}$/', $emailHash)
+				|| !\preg_match('/^[ybndrfg8ejkmcpqxot1uwisza345h769]{32}$/', $wkdHash)) {
+				continue;
+			}
+			$item = [
+				'email_hash' => $emailHash,
+				'wkd_hash' => $wkdHash
+			];
+			if (!empty($entry['key_url']) && \is_string($entry['key_url'])
+				&& static::keyUrlAllowed($entry['key_url'], $domain, $wkdHash)) {
+				$item['key_url'] = $entry['key_url'];
+			} else if ($baseUrl) {
+				$keyUrl = $baseUrl . '/hu/' . $wkdHash;
+				if (static::keyUrlAllowed($keyUrl, $domain, $wkdHash)) {
+					$item['key_url'] = $keyUrl;
+				}
+			}
+			$filtered[] = $item;
+		}
+
+		return [
+			'version' => 1,
+			'algorithm' => 'sha256-email-v1',
+			'domain' => $domain,
+			'generated_at' => \gmdate('c'),
+			'entries' => $filtered
+		];
+	}
+
+	public static function writeManifest(string $domain, array $entries) : bool
+	{
+		$domain = static::normalizeDomain($domain);
+		$path = $domain ? static::manifestPath($domain) : '';
+		if (!$path) {
+			return false;
+		}
+
+		$unique = [];
+		foreach ($entries as $entry) {
+			$emailHash = \strtolower((string) ($entry['email_hash'] ?? ''));
+			$wkdHash = \strtolower((string) ($entry['wkd_hash'] ?? ''));
+			if (\preg_match('/^[a-f0-9]{64}$/', $emailHash)
+				&& \preg_match('/^[ybndrfg8ejkmcpqxot1uwisza345h769]{32}$/', $wkdHash)) {
+				$unique[$emailHash] = [
+					'email_hash' => $emailHash,
+					'wkd_hash' => $wkdHash
+				];
+			}
+		}
+
+		\MailSo\Base\Utils::mkdir(\dirname($path));
+		return false !== \file_put_contents($path, \json_encode([
+			'version' => 1,
+			'algorithm' => 'sha256-email-v1',
+			'domain' => $domain,
+			'generated_at' => \gmdate('c'),
+			'entries' => \array_values($unique)
+		], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n", LOCK_EX);
+	}
+
+	private static function publishManifestEntry(string $email, string $domain, string $wkdHash) : void
+	{
+		$manifest = static::manifest($domain);
+		$manifest['entries'][] = [
+			'email_hash' => static::emailHash($email),
+			'wkd_hash' => $wkdHash
+		];
+		static::writeManifest($domain, $manifest['entries']);
 	}
 
 	public static function armoredPublicKeyToBinary(string $key) : string
@@ -74,6 +258,19 @@ abstract class Wkd
 		return false === $binary ? '' : $binary;
 	}
 
+	public static function matches(string $email, string $publicKey) : bool
+	{
+		$parts = static::emailParts($email);
+		if (!$parts) {
+			return false;
+		}
+
+		[$local, $domain] = $parts;
+		$binary = static::armoredPublicKeyToBinary($publicKey);
+		$current = $binary ? static::read($domain, static::hash($local), $local) : '';
+		return $current && \hash_equals($current, $binary);
+	}
+
 	public static function publish(string $email, string $publicKey) : bool
 	{
 		$parts = static::emailParts($email);
@@ -82,14 +279,19 @@ abstract class Wkd
 		}
 
 		[$local, $domain] = $parts;
-		$path = static::publicKeyPath($domain, static::hash($local));
+		$hash = static::hash($local);
+		$path = static::publicKeyPath($domain, $hash);
 		$binary = static::armoredPublicKeyToBinary($publicKey);
 		if (!$path || !$binary) {
 			return false;
 		}
 
 		\MailSo\Base\Utils::mkdir(\dirname($path));
-		return false !== \file_put_contents($path, $binary, LOCK_EX);
+		$published = false !== \file_put_contents($path, $binary, LOCK_EX);
+		if ($published) {
+			static::publishManifestEntry($email, $domain, $hash);
+		}
+		return $published;
 	}
 
 	public static function read(string $domain, string $hash, string $local = '') : string

@@ -94,6 +94,7 @@ export class LoginUserView extends AbstractViewLogin {
 
 	submitCommand(self, event) {
 		const email = this.email().trim();
+		const loginPassword = this.password();
 		this.email(email);
 
 		let form = event.target.form,
@@ -123,7 +124,8 @@ export class LoginUserView extends AbstractViewLogin {
 							Notifications.UnknownError));
 						this.submitErrorAdditional(oData?.messageAdditional || oData?.message);
 					} else {
-						oData?.Result?.Auth && PgpUserStore.rememberLoginPassword(email, this.password());
+						PgpUserStore.setLoginPassword(email, loginPassword);
+						this.password('');
 						rl.setData(oData.Result);
 					}
 				},

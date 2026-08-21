@@ -1,0 +1,23 @@
+{
+	"name": "Motherboard Repair Canada",
+	"short_name": "MRC Mail",
+	"description": "Motherboard Repair Canada webmail",
+	"display": "standalone",
+	"background_color": "white",
+	"theme_color": "#1D3557",
+	"icons": [
+		{
+			"src": "MRC_Logo_Main_Color.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		},
+		{
+			"src": "MRC_Logo_Main_Color.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any maskable"
+		}
+	],
+	"start_url": "/"
+}

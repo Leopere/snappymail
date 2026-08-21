@@ -12,7 +12,7 @@ checkResponseError = data => {
 	if (Notifications.InvalidToken === err) {
 		console.error(getNotification(err) + ` (${data.messageAdditional})`);
 //		alert(getNotification(err));
-		setTimeout(rl.logoutReload, 5000);
+		setTimeout(rl.logoutReload, 500);
 	} else if ([
 			Notifications.AuthError,
 			Notifications.ConnectionError,
@@ -50,15 +50,27 @@ fetchJSON = (action, sUrl, params, timeout, jsonCallback) => {
 	// Don't abort, read https://github.com/the-djmaze/snappymail/issues/487
 //	abort(action, 0, 1);
 	const controller = new AbortController(),
-		signal = controller.signal;
+		signal = controller.signal,
+		finish = () => {
+			clearTimeout(controller.timeoutId);
+			if (oRequests[action] === controller) {
+				oRequests[action] = null;
+			}
+		};
 	oRequests[action] = controller;
 	// Currently there is no way to combine multiple signals, so AbortSignal.timeout() not possible
-	controller.timeoutId = timeout && setTimeout(() => abort(action, 'TimeoutError'), timeout);
-	return rl.fetchJSON(sUrl, {signal: signal}, params).then(data => {
-		abort(action, 0, 1);
+	controller.timeoutId = timeout && setTimeout(() => {
+		if (oRequests[action] === controller) {
+			oRequests[action] = null;
+		}
+		controller.abort(new DOMException(action, 'TimeoutError'));
+	}, timeout);
+	const request = () => rl.fetchJSON(sUrl, {signal: signal}, params);
+	return (rl.ensureTransport ? rl.ensureTransport() : Promise.resolve()).then(request).then(data => {
+		finish();
 		return jsonCallback ? jsonCallback(data) : Promise.resolve(data);
 	}).catch(err => {
-		clearTimeout(controller.timeoutId);
+		finish();
 		err.aborted = signal.aborted;
 		return Promise.reject(err);
 	});
@@ -84,37 +96,40 @@ export class AbstractFetchRemote
 	 * Can be used to stream lines of json encoded data, but does not work on all servers.
 	 * Apache needs 'flushpackets' like in <Proxy "fcgi://...." flushpackets=on></Proxy>
 	 */
-	streamPerLine(fCallback, sGetAdd, postData) {
-		rl.fetch(getURL(sGetAdd), {}, postData)
-		.then(response => response.body)
-		.then(body => {
-			let buffer = '';
-			const
-				// Firefox TextDecoderStream is not defined
-//				reader = body.pipeThrough(new TextDecoderStream()).getReader();
-				reader = body.getReader(),
-				re = /\r\n|\n|\r/gm,
-				utf8decoder = new TextDecoder(),
-				processText = ({ done, value }) => {
-					buffer += value ? utf8decoder.decode(value, {stream: true}) : '';
+	streamPerLine(fCallback, sGetAdd, postData, timeout = 10000) {
+		const controller = new AbortController(),
+			timeoutId = setTimeout(() => controller.abort(new DOMException(sGetAdd, 'TimeoutError')), timeout),
+			read = async () => {
+				const response = await rl.fetch(getURL(sGetAdd), {signal: controller.signal}, postData);
+				if (!response.ok || !response.body) {
+					throw Error('Streaming request failed');
+				}
+				const reader = response.body.getReader(),
+					re = /\r\n|\n|\r/gm,
+					utf8decoder = new TextDecoder();
+				let buffer = '';
+				for (;;) {
+					const {done, value} = await reader.read();
+					buffer += value ? utf8decoder.decode(value, {stream: !done}) : '';
 					for (;;) {
-						let result = re.exec(buffer);
+						const result = re.exec(buffer);
 						if (!result) {
-							if (done) {
-								break;
-							}
-							reader.read().then(processText);
-							return;
+							break;
 						}
 						fCallback(buffer.slice(0, result.index));
-						buffer = buffer.slice(result.index + 1);
+						buffer = buffer.slice(result.index + result[0].length);
 						re.lastIndex = 0;
 					}
-					// last line didn't end in a newline char
-					buffer.length && fCallback(buffer);
-				};
-			reader.read().then(processText);
-		})
+					if (done) {
+						buffer.length && fCallback(buffer);
+						return;
+					}
+				}
+			};
+
+		return (rl.ensureTransport ? rl.ensureTransport() : Promise.resolve())
+			.then(read)
+			.finally(() => clearTimeout(timeoutId));
 	}
 
 	/**
@@ -131,7 +146,7 @@ export class AbstractFetchRemote
 
 		fetchJSON(sAction, getURL(sGetAdd),
 			sGetAdd ? null : (params || {}),
-			pInt(iTimeout ?? 30000),
+			pInt(iTimeout ?? 10000),
 			async data => {
 				let iError = 0;
 				if (data) {
@@ -188,10 +203,8 @@ export class AbstractFetchRemote
 
 	post(action, fTrigger, params, timeOut) {
 		this.setTrigger(fTrigger, true);
-		return fetchJSON(action, getURL(), params || {}, pInt(timeOut, 30000),
+		return fetchJSON(action, getURL(), params || {}, pInt(timeOut, 10000),
 			async data => {
-				abort(action, 0, 1);
-
 				if (!data) {
 					return Promise.reject(new FetchError(Notifications.JsonParse));
 				}
@@ -229,7 +242,10 @@ export class AbstractFetchRemote
 
 				return data;
 			}
-		);
+		).catch(error => {
+			this.setTrigger(fTrigger, false);
+			throw error;
+		});
 	}
 }
 

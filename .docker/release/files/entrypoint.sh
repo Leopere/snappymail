@@ -6,7 +6,7 @@ if [ "$DEBUG" = 'true' ]; then
     set -x
 fi
 UPLOAD_MAX_SIZE=${UPLOAD_MAX_SIZE:-25M}
-MEMORY_LIMIT=${MEMORY_LIMIT:-128M}
+MEMORY_LIMIT=${MEMORY_LIMIT:-256M}
 SECURE_COOKIES=${SECURE_COOKIES:-true}
 
 # Set attachment size limit
@@ -30,6 +30,36 @@ echo "[INFO] Setting permissions on /var/lib/snappymail"
 chown -R www-data:www-data /var/lib/snappymail/
 chmod 550 /var/lib/snappymail/
 find /var/lib/snappymail/ -type d -exec chmod 750 {} \;
+
+# Keep the image-managed RockSign plugin available in Admin -> Packages even
+# when /var/lib/snappymail is an existing persistent volume. Plugin settings
+# remain in the separate persistent configuration file.
+if [ -d /opt/snappymail-plugins/rocksign ]; then
+    ROCKSIGN_PLUGIN_PARENT=/var/lib/snappymail/_data_/_default_/plugins
+    ROCKSIGN_PLUGIN_DIR=/var/lib/snappymail/_data_/_default_/plugins/rocksign
+    ROCKSIGN_PLUGIN_NEW=${ROCKSIGN_PLUGIN_DIR}.new
+    ROCKSIGN_PLUGIN_OLD=${ROCKSIGN_PLUGIN_DIR}.old
+    mkdir -p "$ROCKSIGN_PLUGIN_PARENT"
+    chown www-data:www-data \
+        /var/lib/snappymail/_data_ \
+        /var/lib/snappymail/_data_/_default_ \
+        "$ROCKSIGN_PLUGIN_PARENT"
+    chmod 750 \
+        /var/lib/snappymail/_data_ \
+        /var/lib/snappymail/_data_/_default_ \
+        "$ROCKSIGN_PLUGIN_PARENT"
+    rm -rf "$ROCKSIGN_PLUGIN_NEW" "$ROCKSIGN_PLUGIN_OLD"
+    mkdir "$ROCKSIGN_PLUGIN_NEW"
+    cp -R /opt/snappymail-plugins/rocksign/. "$ROCKSIGN_PLUGIN_NEW/"
+    chown -R root:root "$ROCKSIGN_PLUGIN_NEW"
+    find "$ROCKSIGN_PLUGIN_NEW" -type d -exec chmod 755 {} \;
+    find "$ROCKSIGN_PLUGIN_NEW" -type f -exec chmod 644 {} \;
+    if [ -e "$ROCKSIGN_PLUGIN_DIR" ]; then
+        mv "$ROCKSIGN_PLUGIN_DIR" "$ROCKSIGN_PLUGIN_OLD"
+    fi
+    mv "$ROCKSIGN_PLUGIN_NEW" "$ROCKSIGN_PLUGIN_DIR"
+    rm -rf "$ROCKSIGN_PLUGIN_OLD"
+fi
 
 # Create snappymail default config if absent
 SNAPPYMAIL_CONFIG_FILE=/var/lib/snappymail/_data_/_default_/configs/application.ini
@@ -60,6 +90,9 @@ sed 's/^auth_logging = .*/auth_logging = On/' -i $SNAPPYMAIL_CONFIG_FILE
 sed 's/^auth_logging_filename = .*/auth_logging_filename = "auth.log"/' -i $SNAPPYMAIL_CONFIG_FILE
 sed 's/^auth_logging_format = .*/auth_logging_format = "[{date:Y-m-d H:i:s}] Auth failed: ip={request:ip} user={imap:login} host={imap:host} port={imap:port}"/' -i $SNAPPYMAIL_CONFIG_FILE
 sed 's/^auth_syslog = .*/auth_syslog = Off/' -i $SNAPPYMAIL_CONFIG_FILE
+# Conversation view is the product default. Servers without THREAD support are
+# still handled as ordinary unthreaded lists by the capability gate.
+sed 's/^mail_use_threads = .*/mail_use_threads = On/' -i $SNAPPYMAIL_CONFIG_FILE
 
 (
     while ! nc -vz -w 1 127.0.0.1 8888 > /dev/null 2>&1; do echo "[INFO] Checking whether nginx is alive"; sleep 1; done

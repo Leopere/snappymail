@@ -96,6 +96,17 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 		return $this->execOutput(['--decrypt','--skip-verify'], $output);
 	}
 
+	protected function _decryptVerify(/*string|resource*/ $input, string &$plaintext) /*: array|false*/
+	{
+		$this->setInput($input);
+		if ($this->pinentries) {
+			$_ENV['PINENTRY_USER_DATA'] = \json_encode(\array_map('strval', $this->pinentries));
+		}
+		$result = $this->exec(['--decrypt'], false);
+		$plaintext = $result ? $result['output'] : '';
+		return $result ? $this->parseSignatures($result['status']) : false;
+	}
+
 	/**
 	 * Decrypts a given text
 	 */
@@ -137,8 +148,7 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 	 */
 	public function decryptVerify(string $text, string &$plaintext) /*: array|false*/
 	{
-		// TODO: https://github.com/the-djmaze/snappymail/issues/89
-		return false;
+		return $this->_decryptVerify($text, $plaintext);
 	}
 
 	/**
@@ -146,8 +156,15 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 	 */
 	public function decryptVerifyFile(string $filename, string &$plaintext) /*: array|false*/
 	{
-		// TODO: https://github.com/the-djmaze/snappymail/issues/89
-		return false;
+		$fp = \fopen($filename, 'rb');
+		try {
+			if (!$fp) {
+				throw new \Exception("Could not open file '{$filename}'");
+			}
+			return $this->_decryptVerify($fp, $plaintext);
+		} finally {
+			$fp && \fclose($fp);
+		}
 	}
 
 	protected function _encrypt(/*string|resource*/ $input, /*string|resource*/ $output = null)
@@ -168,6 +185,33 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 		foreach ($this->encryptKeys as $fingerprint => $dummy) {
 			$arguments[] = '--recipient ' . \escapeshellarg($fingerprint);
 		}
+
+		return $this->execOutput($arguments, $output);
+	}
+
+	protected function _encryptSign(/*string|resource*/ $input, /*string|resource*/ $output = null)
+	{
+		if (!$this->encryptKeys) {
+			throw new \Exception('No encryption keys specified.');
+		}
+		if (empty($this->pinentries)) {
+			throw new \Exception('No signing keys specified.');
+		}
+
+		$this->setInput($input);
+
+		$arguments = ['--sign', '--encrypt'];
+		if ($this->armor) {
+			$arguments[] = '--armor';
+		}
+
+		foreach ($this->pinentries as $fingerprint => $passphrase) {
+			$arguments[] = '--local-user ' . \escapeshellarg($fingerprint);
+		}
+		foreach ($this->encryptKeys as $fingerprint => $dummy) {
+			$arguments[] = '--recipient ' . \escapeshellarg($fingerprint);
+		}
+		$_ENV['PINENTRY_USER_DATA'] = \json_encode(\array_map('strval', $this->pinentries));
 
 		return $this->execOutput($arguments, $output);
 	}
@@ -210,7 +254,7 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 	 */
 	public function encryptSign(string $plaintext) /*: string|false*/
 	{
-		return false;
+		return $this->_encryptSign($plaintext);
 	}
 
 	/**
@@ -218,7 +262,24 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 	 */
 	public function encryptSignFile(string $filename) /*: string|false*/
 	{
-		return false;
+		$fp = \fopen($filename, 'rb');
+		try {
+			if (!$fp) {
+				throw new \Exception("Could not open file '{$filename}'");
+			}
+			return $this->_encryptSign($fp);
+		} finally {
+			$fp && \fclose($fp);
+		}
+	}
+
+	public function encryptSignStream(/*resource*/ $fp, /*string|resource*/ $output = null) /*: string|false*/
+	{
+		if (!$fp || !\is_resource($fp)) {
+			throw new \Exception('Invalid stream resource');
+		}
+		\rewind($fp);
+		return $this->_encryptSign($fp, $output);
 	}
 
 	/**
@@ -570,13 +631,23 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 			'private' => []
 		];
 		// Public
-		foreach (($this->keyinfo($pattern) ?: []) as $key) {
+		try {
+			$publicKeys = $this->keyinfo($pattern) ?: [];
+		} catch (\Throwable $e) {
+			$publicKeys = [];
+		}
+		foreach ($publicKeys as $key) {
 			$key['can_verify'] = $key['can_sign'];
 			unset($key['can_sign']);
 			$keys['public'][] = $key;
 		}
 		// Private, read https://github.com/php-gnupg/php-gnupg/issues/5
-		foreach (($this->keyinfo($pattern, 1) ?: []) as $key) {
+		try {
+			$privateKeys = $this->keyinfo($pattern, 1) ?: [];
+		} catch (\Throwable $e) {
+			$privateKeys = [];
+		}
+		foreach ($privateKeys as $key) {
 			$key['can_decrypt'] = $key['can_encrypt'];
 			unset($key['can_encrypt']);
 			$keys['private'][] = $key;
@@ -681,6 +752,49 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 		return $this->_sign($fp, $output);
 	}
 
+	protected function parseSignatures(array $status) : array
+	{
+		$signatures = [];
+		foreach ($status as $line) {
+			$tokens = \explode(' ', $line);
+			switch ($tokens[0])
+			{
+			case 'VERIFICATION_COMPLIANCE_MODE':
+			case 'TRUST_FULLY':
+				break;
+
+			case 'EXPSIG':
+			case 'EXPKEYSIG':
+			case 'REVKEYSIG':
+			case 'BADSIG':
+			case 'ERRSIG':
+			case 'GOODSIG':
+				$signatures[] = [
+					'fingerprint' => '',
+					'validity' => 0,
+					'timestamp' => 0,
+					'status' => 'GOODSIG' === $tokens[0] ? 0 : 1,
+					'summary' => 'GOODSIG' === $tokens[0] ? 0 : 4,
+					'keyid' => $tokens[1] ?? '',
+					'uid' => \rawurldecode(\implode(' ', \array_splice($tokens, 2))),
+					'valid' => false
+				];
+				break;
+
+			case 'VALIDSIG':
+				$last = \array_key_last($signatures);
+				if (null !== $last) {
+					$signatures[$last]['fingerprint'] = $tokens[1] ?? '';
+					$signatures[$last]['timestamp'] = (int) ($tokens[3] ?? 0);
+					$signatures[$last]['expires'] = (int) ($tokens[4] ?? 0);
+					$signatures[$last]['version'] = (int) ($tokens[5] ?? 0);
+					$signatures[$last]['valid'] = 0 === $signatures[$last]['status'];
+				}
+			}
+		}
+		return $signatures;
+	}
+
 	protected function _verify($input, string $signature) /*: array|false*/
 	{
 		$arguments = ['--verify'];
@@ -697,52 +811,7 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 		}
 
 		$result = $this->exec($arguments);
-
-		$signatures = [];
-		if ($result) {
-			foreach ($result['status'] as $line) {
-				$tokens = \explode(' ', $line);
-				switch ($tokens[0])
-				{
-				case 'VERIFICATION_COMPLIANCE_MODE':
-				case 'TRUST_FULLY':
-					break;
-
-				case 'EXPSIG':
-				case 'EXPKEYSIG':
-				case 'REVKEYSIG':
-				case 'BADSIG':
-				case 'ERRSIG':
-				case 'GOODSIG':
-					$signatures[] = [
-						'fingerprint' => '',
-						'validity' => 0,
-						'timestamp' => 0,
-						'status' => 'GOODSIG' === $tokens[0] ? 0 : 1,
-						'summary' => 'GOODSIG' === $tokens[0] ? 0 : 4,
-						'keyid' => $tokens[1],
-						'uid' => \rawurldecode(\implode(' ', \array_splice($tokens, 2))),
-						'valid' => false
-					];
-					break;
-
-				case 'VALIDSIG':
-					$last = \array_key_last($signatures);
-					$signatures[$last]['fingerprint'] = $tokens[1];
-					$signatures[$last]['timestamp'] = (int) $tokens[3];
-					$signatures[$last]['expires'] = (int) $tokens[4];
-					$signatures[$last]['version'] = (int) $tokens[5];
-//					$signatures[$last]['reserved'] = (int) $tokens[6];
-//					$signatures[$last]['pubkey-algo'] = (int) $tokens[7];
-//					$signatures[$last]['hash-algo'] = (int) $tokens[8];
-//					$signatures[$last]['sig-class'] = $tokens[9];
-//					$signatures[$last]['primary-fingerprint'] = $tokens[10];
-					$signatures[$last]['valid'] = 0;
-				}
-			}
-		}
-
-		return $signatures;
+		return $result ? $this->parseSignatures($result['status']) : [];
 	}
 
 	/**
@@ -813,6 +882,16 @@ class PGP extends Base implements \SnappyMail\PGP\PGPInterface
 	}
 
 	private function exec(array $arguments, bool $throw = true) /*: array|false*/
+	{
+		$lock = $this->acquireOperationLock();
+		try {
+			return $this->execUnlocked($arguments, $throw);
+		} finally {
+			$this->releaseOperationLock($lock);
+		}
+	}
+
+	private function execUnlocked(array $arguments, bool $throw = true) /*: array|false*/
 	{
 		if (\version_compare($this->version, '2.2.5', '<')) {
 			\SnappyMail\Log::error('GPG', "{$this->version} too old");

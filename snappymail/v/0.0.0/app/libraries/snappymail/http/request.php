@@ -16,6 +16,7 @@ abstract class Request
 	public
 		$timeout = 5, // timeout in seconds.
 		$max_response_kb = 1024,
+		$force_ipv4 = false,
 		$user_agent,
 		$max_redirects = 0,
 		$verify_peer = false,

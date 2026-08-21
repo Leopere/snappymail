@@ -1,0 +1,41 @@
+#V-PopupsRockSign {
+	width: min(760px, calc(100vw - 24px));
+}
+
+#V-PopupsRockSign .rocksign-popup select,
+#V-PopupsRockSign .rocksign-popup input,
+#V-PopupsRockSign .rocksign-popup textarea {
+	box-sizing: border-box;
+	width: 100%;
+}
+
+#V-PopupsRockSign .rocksign-role-fields {
+	display: grid;
+	gap: 8px;
+	grid-template-columns: 1fr 1fr;
+}
+
+#V-PopupsRockSign .rocksign-trust-note,
+#V-PopupsRockSign .rocksign-verification {
+	background: rgba(0, 0, 0, .04);
+	border-radius: 4px;
+	padding: 10px 12px;
+}
+
+#V-PopupsRockSign .rocksign-verification.verified {
+	background: rgba(36, 154, 80, .12);
+}
+
+.rocksign-contracts .dropdown-menu {
+	min-width: 230px;
+}
+
+.rocksign-admin-test .help-block {
+	margin-top: 6px;
+}
+
+@media (max-width: 600px) {
+	#V-PopupsRockSign .rocksign-role-fields {
+		grid-template-columns: 1fr;
+	}
+}

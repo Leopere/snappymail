@@ -5,4 +5,5 @@ const { config } = require('./config');
 
 exports.del = (dir) => del(dir);
 
-exports.cleanStatic = () => del(config.paths.staticJS) && del(config.paths.staticCSS);
+// JavaScript is rebuilt by tasks/js.js, which preserves the active minified bundle.
+exports.cleanStatic = () => del(config.paths.staticCSS);

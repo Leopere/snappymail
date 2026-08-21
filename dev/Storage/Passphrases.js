@@ -1,21 +1,25 @@
 import { AskPopupView } from 'View/Popup/Ask';
-import { SettingsUserStore } from 'Stores/User/Settings';
 
-export const Passphrases = new WeakMap();
+let values = new WeakMap();
 
-Passphrases.ask = async (key, sAskDesc, btnText) =>
-	Passphrases.has(key)
-		? {password:Passphrases.handle(key)/*, remember:false*/}
-		: await AskPopupView.password(sAskDesc, btnText, 5);
-
-const timeouts = {};
-// get/set accessor to control deletion after N minutes of inactivity
-Passphrases.handle = (key, pass) => {
-	const timeout = SettingsUserStore.keyPassForget();
-	if (timeout && !timeouts[key]) {
-		timeouts[key] = (()=>Passphrases.delete(key)).debounce(timeout * 1000);
-	}
-	pass && Passphrases.set(key, pass);
-	timeout && timeouts[key]();
-	return Passphrases.get(key);
+export const Passphrases = {
+	has: key => values.has(key),
+	get: key => values.get(key),
+	set: (key, value) => {
+		values.set(key, value);
+		return Passphrases;
+	},
+	delete: key => values.delete(key),
+	clearAll: () => {
+		values = new WeakMap();
+	},
+	// Session logout is the sole expiry boundary for remembered private-key material.
+	handle: (key, pass) => {
+		pass && Passphrases.set(key, pass);
+		return Passphrases.get(key);
+	},
+	ask: async (key, sAskDesc, btnText) =>
+		Passphrases.has(key)
+			? {password:Passphrases.handle(key)/*, remember:false*/}
+			: await AskPopupView.password(sAskDesc, btnText, 5)
 };

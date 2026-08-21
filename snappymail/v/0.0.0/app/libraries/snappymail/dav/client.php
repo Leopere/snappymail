@@ -11,6 +11,9 @@ namespace SnappyMail\DAV;
 class Client
 {
 	public string $urlPath;
+	private string $lastRequestUrl = '';
+	private float $deadline = 0;
+	private int $requestTimeout = 15;
 
 	const
 		NS_DAV  = 'urn:DAV',
@@ -36,7 +39,7 @@ class Client
 		if (!isset($settings['baseUri'])) {
 			throw new \ValueError('A baseUri must be provided');
 		}
-		$this->baseUri = $settings['baseUri'];
+		$this->baseUri = \rtrim($settings['baseUri'], '/');
 
 		$this->HTTP = \SnappyMail\HTTP\Request::factory(/*'socket'*/);
 		$this->HTTP->proxy = $settings['proxy'] ?? null;
@@ -46,8 +49,30 @@ class Client
 			\SnappyMail\Log::warning('DAV', 'No user credentials set');
 		}
 		$this->HTTP->max_response_kb = 0;
-		$this->HTTP->timeout = 15; // timeout in seconds.
+		$this->requestTimeout = \max(1, \min(15, (int) ($settings['timeout'] ?? 15)));
+		$this->HTTP->timeout = $this->requestTimeout;
+		$deadline = (float) ($settings['deadline'] ?? 0);
+		$this->deadline = $deadline > 0 ? \microtime(true) + \max(1, \min(15, $deadline)) : 0;
 		$this->HTTP->max_redirects = 0;
+	}
+
+	public function currentUrl() : string
+	{
+		return $this->absoluteUrl($this->urlPath ?: '/');
+	}
+
+	public function isSameOrigin(string $url) : bool
+	{
+		$base = \parse_url($this->baseUri);
+		$target = \parse_url($this->absoluteUrl($url));
+		return \is_array($base) && \is_array($target)
+			&& $this->origin($base) === $this->origin($target);
+	}
+
+	public function lastRequestPath() : string
+	{
+		$parts = \parse_url($this->lastRequestUrl);
+		return \is_array($parts) && !empty($parts['path']) ? $parts['path'] : $this->urlPath;
 	}
 
 	/**
@@ -65,33 +90,67 @@ class Client
 	 */
 	public function request(string $method, string $url = '', ?string $body = null, array $headers = array()) : \SnappyMail\HTTP\Response
 	{
-		if (!\preg_match('@^(https?:)?//@', $url)) {
-			// If the url starts with a slash, we must calculate the url based off
-			// the root of the base url.
-			if (\str_starts_with($url, '/')) {
-				$parts = \parse_url($this->baseUri);
-				$url = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port'])?':' . $parts['port']:'') . $url;
-			} else {
-				$url = $this->baseUri . $url;
-			}
-		}
+		$url = $this->absoluteUrl($url);
 		\SnappyMail\Log::debug('DAV', "{$method} {$url}" . ($body ? "\n\t" . \str_replace("\n", "\n\t", $body) : ''));
+		$this->HTTP->timeout = $this->remainingTimeout();
 		$response = $this->HTTP->doRequest($method, $url, $body, $headers);
-		if (301 == $response->status) {
-			// Like: RewriteRule ^\.well-known/carddav /nextcloud/remote.php/dav [R=301,L]
+		if (\in_array((int) $response->status, [301, 302, 307, 308], true)) {
 			$location = $response->getRedirectLocation();
-			\SnappyMail\Log::info('DAV', "301 Redirect {$url} to {$location}");
-			$url = \preg_replace('@^(https?:)?//[^/]+[/$]@', '/', $location);
-			$parts = \parse_url($this->baseUri);
-			$url = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port'])?':' . $parts['port']:'') . $url;
+			if (!$location || !$this->isSameOrigin($location)) {
+				throw new \SnappyMail\HTTP\Exception("{$method} {$url}: unsafe DAV redirect", $response->status, $response);
+			}
+			\SnappyMail\Log::info('DAV', "{$response->status} Redirect {$url} to {$location}");
+			$url = $this->absoluteUrl($location);
+			$this->HTTP->timeout = $this->remainingTimeout();
 			$response = $this->HTTP->doRequest($method, $url, $body, $headers);
 		}
 		if (300 <= $response->status) {
 			throw new \SnappyMail\HTTP\Exception("{$method} {$url}", $response->status, $response);
 		}
+		$this->lastRequestUrl = $url;
 		\SnappyMail\Log::debug('DAV', "{$response->status}: {$response->body}");
 
 		return $response;
+	}
+
+	private function remainingTimeout() : int
+	{
+		if (!$this->deadline) {
+			return $this->requestTimeout;
+		}
+
+		$remaining = (int) \floor($this->deadline - \microtime(true));
+		if (1 > $remaining) {
+			throw new \RuntimeException('DAV discovery deadline exceeded');
+		}
+
+		return \min($this->requestTimeout, $remaining);
+	}
+
+	private function absoluteUrl(string $url) : string
+	{
+		if (\preg_match('@^https?://@i', $url)) {
+			return $url;
+		}
+
+		$parts = \parse_url($this->baseUri);
+		if (!\is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+			throw new \UnexpectedValueException('Invalid DAV base URI');
+		}
+		if (\str_starts_with($url, '//')) {
+			return $parts['scheme'] . ':' . $url;
+		}
+
+		$origin = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+		return \str_starts_with($url, '/') ? $origin . $url : $origin . '/' . \ltrim($url, '/');
+	}
+
+	private function origin(array $parts) : string
+	{
+		$scheme = \strtolower((string) ($parts['scheme'] ?? ''));
+		$host = \strtolower((string) ($parts['host'] ?? ''));
+		$port = (int) ($parts['port'] ?? ('https' === $scheme ? 443 : 80));
+		return $scheme . '://' . $host . ':' . $port;
 	}
 
 	/**

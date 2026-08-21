@@ -48,10 +48,49 @@ abstract class Keyservers
 	{
 		if (!static::$HTTP) {
 			static::$HTTP = \SnappyMail\HTTP\Request::factory(/*'socket' or 'curl'*/);
-			static::$HTTP->max_response_kb = 0;
+			static::$HTTP->max_response_kb = 2048;
+			static::$HTTP->max_redirects = 0;
+			static::$HTTP->verify_peer = true;
 			static::$HTTP->timeout = 15; // timeout in seconds.
 		}
 		return static::$HTTP;
+	}
+
+	private static function wkdDeadline(int $timeoutMs) : float
+	{
+		return \microtime(true) + \max(1, \min(10, $timeoutMs / 1000));
+	}
+
+	private static function wkdTimeoutSeconds(float $deadline) : int
+	{
+		$remaining = $deadline - \microtime(true);
+		return 0 < $remaining ? \max(1, (int) \ceil($remaining)) : 0;
+	}
+
+	private static function wkdFetchUrl(string $url, float $deadline, int $maximumTimeout = 0) : ?\SnappyMail\HTTP\Response
+	{
+		$timeout = static::wkdTimeoutSeconds($deadline);
+		if ($maximumTimeout) {
+			$timeout = \min($timeout, $maximumTimeout);
+		}
+		if (!$timeout) {
+			return null;
+		}
+
+		$HTTP = static::HTTP();
+		$previousTimeout = $HTTP->timeout;
+		$previousForceIpv4 = $HTTP->force_ipv4;
+		$HTTP->timeout = $timeout;
+		$HTTP->force_ipv4 = true;
+		try {
+			return $HTTP->doRequest('GET', $url);
+		} catch (\Throwable $e) {
+			\SnappyMail\Log::debug('PGP', "WKD fetch failed for {$url}: {$e->getMessage()}");
+			return null;
+		} finally {
+			$HTTP->timeout = $previousTimeout;
+			$HTTP->force_ipv4 = $previousForceIpv4;
+		}
 	}
 
 	/**
@@ -197,29 +236,158 @@ abstract class Keyservers
 	}
 
 	/** https://wiki.gnupg.org/WKD */
-	public static function wkd(string $email) : string
+	public static function wkd(string $email, int $timeoutMs = 2000) : string
 	{
 		$parts = Wkd::emailParts($email);
 		if (!$parts) {
 			return '';
 		}
 
+		$deadline = static::wkdDeadline($timeoutMs);
 		[$local, $domain] = $parts;
 		$hash = Wkd::hash($local);
+
 		$paths = [
-			"https://{$domain}/.well-known/openpgpkey/hu/{$hash}?l=" . \rawurlencode($local),
-			"https://openpgpkey.{$domain}/.well-known/openpgpkey/{$domain}/hu/{$hash}?l=" . \rawurlencode($local)
+			"https://openpgpkey.{$domain}/.well-known/openpgpkey/{$domain}/hu/{$hash}?l=" . \rawurlencode($local),
+			"https://{$domain}/.well-known/openpgpkey/hu/{$hash}?l=" . \rawurlencode($local)
 		];
 
-		foreach ($paths as $url) {
+		foreach ($paths as $index => $url) {
 			\SnappyMail\Log::debug('PGP', $url);
-			$oResponse = static::HTTP()->doRequest('GET', $url);
+			// A transient failure to the standard advanced endpoint must not burn
+			// the entire send-time WKD window. Retry it once with a one-second cap.
+			$oResponse = static::wkdFetchUrl($url, $deadline, 1);
+			if (!$oResponse && 0 === $index && static::wkdTimeoutSeconds($deadline)) {
+				\SnappyMail\Log::debug('PGP', "Retrying WKD fetch for {$url}");
+				$oResponse = static::wkdFetchUrl($url, $deadline, 1);
+			}
 			if ($oResponse && 200 === $oResponse->status && $oResponse->body) {
 				return $oResponse->body;
 			}
 		}
 
+		// Sending is fail-closed: only a domain-owned public WKD result proves
+		// that a recipient currently publishes this key. Do not use a local cache.
+		return static::wkdManifest($email, $domain, $hash, $deadline);
+	}
+
+	private static function wkdManifest(string $email, string $domain, string $wkdHash, float $deadline) : string
+	{
+		$emailHash = Wkd::emailHash($email);
+		if (!$emailHash) {
+			return '';
+		}
+
+		foreach (static::wkdManifestUrls($domain, $deadline) as $manifestUrl) {
+			\SnappyMail\Log::debug('PGP', $manifestUrl);
+			try {
+				$oResponse = static::wkdFetchUrl($manifestUrl, $deadline);
+			} catch (\Throwable $e) {
+				\SnappyMail\Log::debug('PGP', "Manifest lookup failed for {$manifestUrl}: {$e->getMessage()}");
+				continue;
+			}
+			if (!$oResponse || 200 !== $oResponse->status || !$oResponse->body) {
+				continue;
+			}
+
+			$data = \json_decode($oResponse->body, true);
+			if (!\is_array($data) || 1 !== (int) ($data['version'] ?? 0)
+				|| 'sha256-email-v1' !== ($data['algorithm'] ?? '')
+				|| $domain !== Wkd::normalizeDomain((string) ($data['domain'] ?? ''))
+				|| !\is_array($data['entries'] ?? null)) {
+				continue;
+			}
+
+			foreach ($data['entries'] as $entry) {
+				if (!\is_array($entry)
+					|| $emailHash !== \strtolower((string) ($entry['email_hash'] ?? ''))
+					|| $wkdHash !== \strtolower((string) ($entry['wkd_hash'] ?? ''))) {
+					continue;
+				}
+
+				$keyUrl = (string) ($entry['key_url'] ?? '');
+				if (!static::wkdKeyUrlMatches($keyUrl, $domain, $wkdHash)) {
+					continue;
+				}
+
+				\SnappyMail\Log::debug('PGP', $keyUrl);
+				try {
+					$keyResponse = static::wkdFetchUrl($keyUrl, $deadline);
+				} catch (\Throwable $e) {
+					\SnappyMail\Log::debug('PGP', "Manifest key fetch failed for {$keyUrl}: {$e->getMessage()}");
+					continue;
+				}
+				if ($keyResponse && 200 === $keyResponse->status && $keyResponse->body) {
+					return $keyResponse->body;
+				}
+			}
+		}
+
 		return '';
+	}
+
+	private static function wkdManifestUrlMatches(string $url, string $domain) : bool
+	{
+		return Wkd::manifestUrlAllowed($url, $domain);
+	}
+
+	private static function wkdKeyUrlMatches(string $url, string $domain, string $wkdHash) : bool
+	{
+		return Wkd::keyUrlAllowed($url, $domain, $wkdHash);
+	}
+
+	private static function wkdManifestUrls(string $domain, float $deadline) : array
+	{
+		// Standard advanced/direct WKD has already failed. The fixed identity-domain
+		// TXT owner is authoritative for locating this profile's hashed manifest.
+		return 1 < static::wkdTimeoutSeconds($deadline)
+			? static::wkdManifestTxtUrls($domain)
+			: [];
+	}
+
+	private static function wkdManifestTxtUrls(string $domain) : array
+	{
+		$records = @\dns_get_record("_openpgpkey.{$domain}", DNS_TXT);
+		return \is_array($records) ? static::wkdManifestTxtRecordUrls($records, $domain) : [];
+	}
+
+	private static function wkdManifestTxtRecordUrls(array $records, string $domain) : array
+	{
+		$urls = [];
+		foreach ($records as $record) {
+			$txt = (string) ($record['txt'] ?? '');
+			$url = static::wkdManifestTxtRecordUrl($txt, $domain);
+			if ($url) {
+				$urls[] = $url;
+			}
+		}
+
+		$urls = \array_values(\array_unique($urls));
+		return 1 === \count($urls) ? $urls : [];
+	}
+
+	private static function wkdManifestTxtRecordUrl(string $txt, string $domain) : string
+	{
+		$parts = [];
+		foreach (\explode(';', $txt) as $part) {
+			$part = \trim($part);
+			if ('' === $part) {
+				continue;
+			}
+			[$name, $value] = \array_pad(\explode('=', $part, 2), 2, '');
+			$name = \strtolower(\trim($name));
+			if (!$name || \array_key_exists($name, $parts)) {
+				return '';
+			}
+			$parts[$name] = \trim($value, " \t\n\r\0\x0B\"'");
+		}
+
+		$url = (string) ($parts['url'] ?? '');
+		return 'OPENPGPKEY1' === \strtoupper((string) ($parts['v'] ?? ''))
+			&& 'sha256-email-v1' === \strtolower((string) ($parts['alg'] ?? ''))
+			&& static::wkdManifestUrlMatches($url, $domain)
+			? $url
+			: '';
 	}
 
 	public static function dns(string $host, string $keyid)

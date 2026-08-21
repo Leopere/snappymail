@@ -1,10 +1,10 @@
 ## Brandable SnappyMail Fork
 
-This repository is a private brandable hard-fork scaffold of SnappyMail. It adds runtime branding env vars, Motherboard Repair Canada default assets, an internal-domain GnuPG default, and a static rebuild watcher while preserving upstream SnappyMail attribution and AGPL licensing.
+This repository is a private brandable hard-fork scaffold of SnappyMail. It adds runtime branding env vars, Motherboard Repair Canada default assets, a browser-only OpenPGP vault with WKD discovery, and a static rebuild watcher while preserving upstream SnappyMail attribution and AGPL licensing.
 
 See [BRANDING.md](BRANDING.md) for supported env vars and the local rebuild loop.
 
-Agent-facing repository skills live in [docs/agent-skills.md](docs/agent-skills.md). The OpenPGP WKD/GnuPG skill documents the interaction-free server-side encryption path and points at [docs/openpgp-wkd.md](docs/openpgp-wkd.md).
+Agent-facing repository skills live in [docs/agent-skills.md](docs/agent-skills.md). The OpenPGP WKD skill documents browser-only encryption and points at [docs/openpgp-wkd.md](docs/openpgp-wkd.md).
 
 Local development:
 
@@ -12,7 +12,7 @@ Local development:
 npm run dev
 ```
 
-This builds static assets, starts Docker on `0.0.0.0:8888`, and rebuilds generated assets on source changes. Use `npm run dev:tunnel` to also expose the local stack through `https://mail.nixc.us/`.
+This builds static assets, starts Docker on `127.0.0.1:8888`, and rebuilds generated assets on source changes. Use `npm run dev:tunnel` to also expose the local stack through `https://mail.boompay.ca/`, `https://mail.nixc.us/`, `https://openpgpkey.boompay.ca/`, and `https://openpgpkey.nixc.us/`.
 
 For the tunnel profile, copy `.env.example` to `.env` and set `TUNNEL_KEY_PATH` to the private key used with `ingress.nixc.us`. `.env` is local-only and ignored by git.
 
@@ -22,7 +22,17 @@ Verification:
 npm run verify
 ```
 
-The UI test provisions `test@example.com` and `teammate@example.com` locally, exchanges their GnuPG public keys, sends an internal encrypted message, and checks that the recipient sees decrypted content without PGP armor.
+The generic UI test retains local compatibility coverage. It does not certify the public browser-only OpenPGP deployment.
+
+For any OpenPGP change, use the dedicated acceptance gate instead:
+
+```sh
+npm run verify:openpgp
+```
+
+It validates the current local build against both public webmail bundles, fresh
+WKD lookup, encryption recipient packets, blocked missing-key sends, browser
+decryption, and normal forwarding. See [docs/openpgp-verification.md](docs/openpgp-verification.md).
 
 ---
 

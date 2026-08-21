@@ -193,11 +193,18 @@ abstract class Account implements \JsonSerializable
 		return $oAccount;
 	}
 
-	public function ImapConnectAndLogin(\RainLoop\Plugins\Manager $oPlugins, \MailSo\Imap\ImapClient $oImapClient, \RainLoop\Config\Application $oConfig) : bool
+	public function ImapConnectAndLogin(
+		\RainLoop\Plugins\Manager $oPlugins,
+		\MailSo\Imap\ImapClient $oImapClient,
+		\RainLoop\Config\Application $oConfig,
+		?int $iTimeout = null
+	) : bool
 	{
 		$oSettings = $this->Domain()->ImapSettings();
-		$oSettings->timeout = \max($oSettings->timeout, (int) $oConfig->Get('imap', 'timeout', $oSettings->timeout));
+		$iConfigTimeout = (int) $oConfig->Get('imap', 'timeout', $oSettings->timeout);
+		$oSettings->timeout = \max(5, $iTimeout ?: ($iConfigTimeout ?: $oSettings->timeout));
 		$oSettings->username = $this->ImapUser();
+		$oImapClient->SetTimeOuts($oSettings->timeout);
 
 		$oSettings->expunge_all_on_delete |= !!$oConfig->Get('imap', 'use_expunge_all_on_delete', false);
 		$oSettings->fast_simple_search = !(!$oSettings->fast_simple_search || !$oConfig->Get('imap', 'message_list_fast_simple_search', true));
@@ -210,19 +217,36 @@ abstract class Account implements \JsonSerializable
 
 		$oImapClient->Settings = $oSettings;
 
-		$oPlugins->RunHook('imap.before-connect', array($this, $oImapClient, $oSettings));
-		$oImapClient->Connect($oSettings);
-		$oPlugins->RunHook('imap.after-connect', array($this, $oImapClient, $oSettings));
+		$startedAt = \microtime(true);
+		$connectedAt = null;
+		try {
+			$oPlugins->RunHook('imap.before-connect', array($this, $oImapClient, $oSettings));
+			$oImapClient->Connect($oSettings);
+			$connectedAt = \microtime(true);
+			$oPlugins->RunHook('imap.after-connect', array($this, $oImapClient, $oSettings));
 
-		$oSettings->passphrase = $this->oImapPass;
-		return $this->netClientLogin($oImapClient, $oPlugins);
+			$oSettings->passphrase = $this->oImapPass;
+			return $this->netClientLogin($oImapClient, $oPlugins);
+		} finally {
+			$finishedAt = \microtime(true);
+			$totalMs = (int) \round(1000 * ($finishedAt - $startedAt));
+			if (1000 <= $totalMs) {
+				$connectMs = null === $connectedAt
+					? $totalMs
+					: (int) \round(1000 * ($connectedAt - $startedAt));
+				$loginMs = null === $connectedAt ? 0 : \max(0, $totalMs - $connectMs);
+				\SnappyMail\Log::warning('PERF', "imap host={$oSettings->host} connect={$connectMs}ms login={$loginMs}ms total={$totalMs}ms");
+			}
+		}
 	}
 
 	public function SmtpConnectAndLogin(\RainLoop\Plugins\Manager $oPlugins, \MailSo\Smtp\SmtpClient $oSmtpClient) : bool
 	{
 		$oSettings = $this->Domain()->SmtpSettings();
+		$oSettings->timeout = \max(5, \min(10, $oSettings->timeout));
 		$oSettings->username = $this->SmtpUser();
 		$oSettings->Ehlo = \MailSo\Smtp\SmtpClient::EhloHelper();
+		$oSmtpClient->SetTimeOuts($oSettings->timeout);
 
 		$oSmtpClient->Settings = $oSettings;
 

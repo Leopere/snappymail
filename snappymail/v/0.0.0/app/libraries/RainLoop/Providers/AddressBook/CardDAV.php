@@ -239,6 +239,10 @@ trait CardDAV
 			return $aContactsPaths;
 		}
 		if (\preg_match('/^http[s]?:\/\//i', $sAddressbookHomeSet)) {
+			if (!empty($this->aDAVConfig['Auto']) && !$oClient->isSameOrigin($sAddressbookHomeSet)) {
+				\SnappyMail\Log::warning('DAV', 'Automatic CardDAV discovery rejected a cross-origin address book');
+				return $aContactsPaths;
+			}
 			$oClient = $this->getDavClientFromUrl($sAddressbookHomeSet, $sUser, $sPassword, $sProxy);
 			if (!$oClient) {
 				return $aContactsPaths;
@@ -258,6 +262,51 @@ trait CardDAV
 		}
 
 		return $aContactsPaths;
+	}
+
+	/**
+	 * Mail-in-a-Box's Nextcloud uses the older CardDAV collection layout and
+	 * does not expose current-user-principal at the redirected root.
+	 */
+	private function getLegacyNextcloudContactsPaths(DAVClient $oClient, string $sUser) : array
+	{
+		$sPath = \rtrim($oClient->lastRequestPath(), '/') . '/addressbooks/' . \rawurlencode($sUser) . '/';
+		$aResponse = $this->detectionPropFind($oClient, $sPath);
+		$aPaths = [];
+		if (\is_array($aResponse)) {
+			foreach ($aResponse as $sPropPath => $aItem) {
+				if (!empty($sPropPath) && static::hasDAVCollection($aItem)
+					&& \in_array('{urn:ietf:params:xml:ns:carddav}addressbook', $aItem['{DAV:}resourcetype']))
+				{
+					$aPaths[$sPropPath] = isset($aItem['{DAV:}displayname']) ? \trim($aItem['{DAV:}displayname']) : '';
+				}
+			}
+		}
+
+		return $aPaths;
+	}
+
+	private function selectContactsPath(array $aPaths, string $sUserAddressBookNameName = '') : string
+	{
+		if ('' !== $sUserAddressBookNameName) {
+			foreach ($aPaths as $sKey => $sValue) {
+				if (\mb_strtolower(\trim($sValue)) === $sUserAddressBookNameName) {
+					return $sKey;
+				}
+			}
+		}
+
+		foreach ($aPaths as $sKey => $sValue) {
+			if (\in_array(\mb_strtolower($sValue), array('contacts', 'default', 'addressbook', 'address book'))) {
+				return $sKey;
+			}
+		}
+
+		foreach ($aPaths as $sKey => $_) {
+			return $sKey;
+		}
+
+		return '';
 	}
 
 	/**
@@ -310,10 +359,12 @@ trait CardDAV
 		$aUrl['path'] = isset($aUrl['path']) ? \rtrim($aUrl['path'], '\\/').'/' : '/';
 
 		$aSettings = array(
-			'baseUri' => $aUrl['scheme'].'://'.$aUrl['host'].($aUrl['port'] ? ':'.$aUrl['port'] : ''),
-			'userName' => $sUser,
-			'password' => $sPassword
-		);
+				'baseUri' => $aUrl['scheme'].'://'.$aUrl['host'].($aUrl['port'] ? ':'.$aUrl['port'] : ''),
+				'userName' => $sUser,
+				'password' => $sPassword,
+				'timeout' => (int) ($this->aDAVConfig['Timeout'] ?? 15),
+				'deadline' => (float) ($this->aDAVConfig['Deadline'] ?? 0)
+			);
 
 		$this->logMask($sPassword);
 
@@ -322,7 +373,7 @@ trait CardDAV
 		}
 
 		$oClient = new DAVClient($aSettings);
-		$oClient->setVerifyPeer(false);
+		$oClient->setVerifyPeer((bool) \RainLoop\Api::Config()->Get('ssl', 'verify_certificate', true));
 
 		$oClient->urlPath = $aUrl['path'];
 
@@ -355,45 +406,32 @@ trait CardDAV
 
 		$sPath = $oClient->urlPath;
 
+		// Mail-in-a-Box Nextcloud exposes a predictable address-book collection
+		// after its same-origin well-known redirect. Avoid database work and the
+		// slower generic DAV walk while the automatic login probe is running.
+		if (!empty($this->aDAVConfig['Auto'])) {
+			$this->detectionPropFind($oClient, '/.well-known/carddav');
+			$sFastPath = $this->selectContactsPath(
+				$this->getLegacyNextcloudContactsPaths($oClient, $sUser),
+				$sUserAddressBookNameName
+			);
+			if ($sFastPath) {
+				$oClient->urlPath = $sFastPath;
+				return $oClient;
+			}
+		}
+
 		$bGood = true;
 		if ('' === $sPath || '/' === $sPath || !$this->checkContactsPath($oClient, $sPath)) {
 			/**
 			 * Path is not an addressbook, try to find it
 			 */
 			$aPaths = $this->getContactsPaths($oClient, $sPath, $sUser, $sPassword, $sProxy);
-			$this->oLogger->WriteDump($aPaths);
-
-			$sNewPath = '';
-			if (\is_array($aPaths)) {
-				if (1 < \count($aPaths)) {
-					if ('' !== $sUserAddressBookNameName) {
-						foreach ($aPaths as $sKey => $sValue) {
-							$sValue = \mb_strtolower(\trim($sValue));
-							if ($sValue === $sUserAddressBookNameName) {
-								$sNewPath = $sKey;
-								break;
-							}
-						}
-					}
-
-					if (empty($sNewPath)) {
-						foreach ($aPaths as $sKey => $sValue) {
-							$sValue = \mb_strtolower($sValue);
-							if (\in_array($sValue, array('contacts', 'default', 'addressbook', 'address book'))) {
-								$sNewPath = $sKey;
-								break;
-							}
-						}
-					}
-				}
-
-				if (empty($sNewPath)) {
-					foreach ($aPaths as $sKey => $sValue) {
-						$sNewPath = $sKey;
-						break;
-					}
-				}
+			if (!$aPaths) {
+				$aPaths = $this->getLegacyNextcloudContactsPaths($oClient, $sUser);
 			}
+
+				$sNewPath = $this->selectContactsPath($aPaths, $sUserAddressBookNameName);
 
 			$bGood = $sNewPath && $this->checkContactsPath($oClient, $sNewPath);
 			if (!$bGood) {

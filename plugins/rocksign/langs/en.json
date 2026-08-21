@@ -1,0 +1,9 @@
+{
+	"ROCKSIGN": {
+		"CONTRACTS": "Contracts",
+		"REQUEST_SIGNATURES": "Request signatures…",
+		"CERTIFY_PDF": "Certify attached PDF…",
+		"ATTACH_COMPLETED": "Attach completed contract…",
+		"VERIFY_PDF": "Verify attached PDF…"
+	}
+}

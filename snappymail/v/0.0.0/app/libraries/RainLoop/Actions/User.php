@@ -15,6 +15,7 @@ trait User
 	use Filters;
 	use Folders;
 	use Messages;
+	use Snooze;
 	use Attachments;
 	use Pgp;
 	use SMime;
@@ -129,6 +130,9 @@ trait User
 	public function DoSettingsUpdate() : array
 	{
 		$oAccount = $this->getAccountFromToken();
+		if (!$oAccount) {
+			return $this->FalseResponse();
+		}
 
 		$self = $this;
 		$oConfig = $this->Config();
@@ -191,8 +195,10 @@ trait User
 		$this->setSettingsFromParams($oSettings, 'NotificationSound', 'string');
 		$this->setSettingsFromParams($oSettings, 'UseCheckboxesInList', 'bool');
 		$this->setSettingsFromParams($oSettings, 'AllowDraftAutosave', 'bool');
-		$this->setSettingsFromParams($oSettings, 'AutoLogout', 'int');
-		$this->setSettingsFromParams($oSettings, 'keyPassForget', 'int');
+		$this->setSettingsFromParams($oSettings, 'AutoLogout', 'int', function ($iValue) {
+			return \max(5, \min(1440, (int) $iValue ?: 30));
+		});
+		$this->setSettingsFromParams($oSettings, 'AutoLogoutDisabled', 'bool');
 		$this->setSettingsFromParams($oSettings, 'messageNewWindow', 'bool');
 		$this->setSettingsFromParams($oSettings, 'messageReadAuto', 'bool');
 		$this->setSettingsFromParams($oSettings, 'MessageReadDelay', 'int');
@@ -205,8 +211,25 @@ trait User
 		$this->setSettingsFromParams($oSettings, 'Resizer5Height', 'int');
 
 		$this->setSettingsFromParams($oSettingsLocal, 'defaultSort', 'string');
+		$this->setSettingsFromParams($oSettingsLocal, 'SmartArchiveEnabled', 'bool');
+		$this->setSettingsFromParams($oSettingsLocal, 'CategoryFolderRoutes', 'string', static function (string $value) : string {
+			$categories = ['calendar', 'contract', 'finance', 'security', 'newsletter', 'notification'];
+			$decoded = \strlen($value) <= 4096 ? \json_decode($value, true) : null;
+			$routes = [];
+			if (\is_array($decoded)) {
+				foreach ($categories as $category) {
+					$folder = $decoded[$category] ?? null;
+					if (\is_string($folder) && '' !== $folder && \strlen($folder) <= 512
+					 && !\preg_match('/[\x00-\x1F\x7F]/', $folder)) {
+						$routes[$category] = $folder;
+					}
+				}
+			}
+			return (string) \json_encode($routes, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+		});
 		$this->setSettingsFromParams($oSettingsLocal, 'UseThreads', 'bool');
-		$this->setSettingsFromParams($oSettingsLocal, 'threadAlgorithm', 'string');
+		$this->setSettingsFromParams($oSettingsLocal, 'threadAlgorithm', 'string',
+			[\MailSo\Mail\MessageListParams::class, 'normalizeThreadAlgorithm']);
 		$this->setSettingsFromParams($oSettingsLocal, 'ReplySameFolder', 'bool');
 		$this->setSettingsFromParams($oSettingsLocal, 'HideUnsubscribed', 'bool');
 		$this->setSettingsFromParams($oSettingsLocal, 'HideDeleted', 'bool');
@@ -287,7 +310,7 @@ trait User
 				case 'int':
 					$iValue = (int) $sValue;
 					if ($cCallback) {
-						$sValue = $cCallback($iValue);
+						$iValue = $cCallback($iValue);
 					}
 					$oSettings->SetConf($sConfigName, $iValue);
 					break;

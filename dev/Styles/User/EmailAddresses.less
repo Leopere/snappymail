@@ -79,6 +79,12 @@
 	vertical-align: baseline;
 }
 
+@media screen and (max-width: @maxMobileWidth) {
+	#rl-app #V-PopupsCompose .emailaddresses input[type="text"] {
+		min-width: 0;
+	}
+}
+
 .emailaddresses li.emailaddresses-selected,
 .emailaddresses li.emailaddresses-selected a {
 	background-color: Highlight;

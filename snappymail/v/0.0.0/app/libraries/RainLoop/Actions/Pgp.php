@@ -11,17 +11,249 @@ use MailSo\Mime\Enumerations\Header as MimeEnumHeader;
 
 trait Pgp
 {
-	private function gnuPGKeyCanEncrypt(array $key) : bool
+	private function clientVaultKeys($value, array $expected) : bool
 	{
-		if (!empty($key['can_encrypt'])) {
-			return true;
+		if (!\is_array($value)) {
+			return false;
 		}
-		foreach (($key['subkeys'] ?? []) as $subkey) {
-			if (!empty($subkey['can_encrypt']) && empty($subkey['expired']) && empty($subkey['revoked'])) {
-				return true;
-			}
+		$actual = \array_keys($value);
+		\sort($actual);
+		\sort($expected);
+		return $actual === $expected;
+	}
+
+	private function clientVaultBase64Url($value, int $minBytes, int $maxBytes) : bool
+	{
+		if (!\is_string($value) || !\preg_match('/^[A-Za-z0-9_-]+$/D', $value)) {
+			return false;
 		}
-		return false;
+		$padded = \strtr($value, '-_', '+/') . \str_repeat('=', (4 - \strlen($value) % 4) % 4);
+		$decoded = \base64_decode($padded, true);
+		return false !== $decoded && $minBytes <= \strlen($decoded) && $maxBytes >= \strlen($decoded);
+	}
+
+	private function clientVaultCipher($cipher) : bool
+	{
+		return $this->clientVaultKeys($cipher, ['name', 'iv', 'ciphertext'])
+			&& 'AES-256-GCM' === ($cipher['name'] ?? '')
+			&& $this->clientVaultBase64Url($cipher['iv'] ?? null, 12, 12)
+			&& $this->clientVaultBase64Url($cipher['ciphertext'] ?? null, 17, 2 * 1024 * 1024);
+	}
+
+	private function clientVaultWrapper($wrapper) : bool
+	{
+		return $this->clientVaultKeys($wrapper, ['kdf', 'cipher'])
+			&& $this->clientVaultKeys($wrapper['kdf'] ?? null, ['name', 'hash', 'iterations', 'salt'])
+			&& 'PBKDF2-HMAC-SHA-256' === ($wrapper['kdf']['name'] ?? '')
+			&& 'SHA-256' === ($wrapper['kdf']['hash'] ?? '')
+			&& 600000 === ($wrapper['kdf']['iterations'] ?? 0)
+			&& $this->clientVaultBase64Url($wrapper['kdf']['salt'] ?? null, 16, 16)
+			&& $this->clientVaultCipher($wrapper['cipher']);
+	}
+
+	private function clientVault($value) : ?array
+	{
+		if (!\is_string($value) || 2 * 1024 * 1024 < \strlen($value)
+			|| \str_contains($value, 'BEGIN PGP PRIVATE KEY')) {
+			return null;
+		}
+		$vault = \json_decode($value, true);
+		return \is_array($vault)
+			&& $this->clientVaultKeys($vault, ['version', 'payload', 'wrappers'])
+			&& 2 === ($vault['version'] ?? 0)
+			&& $this->clientVaultCipher($vault['payload'] ?? null)
+			&& $this->clientVaultKeys($vault['wrappers'] ?? null, ['password'])
+			&& $this->clientVaultWrapper($vault['wrappers']['password'])
+			? $vault : null;
+	}
+
+	private function clientVaultPublicKey($value) : string
+	{
+		$value = \trim((string) $value);
+		return 0 < \strlen($value) && 128 * 1024 >= \strlen($value)
+			&& !\str_contains($value, 'PGP PRIVATE KEY')
+			&& \preg_match('/\A-----BEGIN PGP PUBLIC KEY BLOCK-----.+-----END PGP PUBLIC KEY BLOCK-----\z/sD', $value)
+			? $value : '';
+	}
+
+	private function clientVaultRecord(\RainLoop\Model\Account $account) : ?array
+	{
+		$record = \json_decode((string) $this->StorageProvider()->Get(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+			'.openpgp-client-vault',
+			''
+		), true);
+		return \is_array($record)
+			&& $this->clientVaultKeys($record, ['version', 'revision', 'vault', 'publicKey'])
+			&& 2 === ($record['version'] ?? 0)
+			&& 0 < ($record['revision'] ?? 0)
+			&& $this->clientVault(\json_encode($record['vault']))
+			&& $this->clientVaultPublicKey($record['publicKey'] ?? '')
+			? $record : null;
+	}
+
+	private function clientVaultPublicKeyPublished(\RainLoop\Model\Account $account, string $publicKey) : bool
+	{
+		try {
+			return Wkd::matches($account->Email(), $publicKey)
+				|| Wkd::publish($account->Email(), $publicKey);
+		} catch (\Throwable $e) {
+			$this->logWrite('Browser OpenPGP WKD publication failed: ' . $e->getMessage(), \LOG_WARNING, 'OpenPGP');
+			return false;
+		}
+	}
+
+	private function restoreClientVaultRecord(\RainLoop\Model\Account $account, string $previous) : bool
+	{
+		$storage = $this->StorageProvider();
+		return '' === $previous
+			? $storage->Clear(
+				$account,
+				\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+				'.openpgp-client-vault'
+			)
+			: $storage->Put(
+				$account,
+				\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+				'.openpgp-client-vault',
+				$previous
+			);
+	}
+
+	private function discardLegacyPrivateKeyState(\RainLoop\Model\Account $account) : void
+	{
+		$this->StorageProvider()->Clear(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT,
+			'.gnupg-passphrases'
+		);
+		$root = \rtrim($this->StorageProvider()->GenerateFilePath(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT
+		), '/');
+		$homedir = $root . '/.gnupg';
+		if (\is_dir($homedir) && !\is_link($homedir)) {
+			\MailSo\Base\Utils::RecRmDir($homedir);
+		}
+		Backup::clearPrivateKeys();
+	}
+
+	/**
+	 * The server stores an authenticated user's opaque browser-encrypted vault.
+	 * It never decrypts, derives, or receives a vault secret or private key.
+	 */
+	public function DoPgpClientVaultGet() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		$record = $account ? $this->clientVaultRecord($account) : null;
+		$published = $record && $this->clientVaultPublicKeyPublished($account, $record['publicKey']);
+		if ($record && !$published) {
+			$this->logWrite('Browser OpenPGP vault exists but its WKD public key is unavailable.', \LOG_WARNING, 'OpenPGP');
+		}
+		return $this->DefaultResponse([
+			'record' => $record,
+			'published' => !!$published
+		]);
+	}
+
+	public function DoPgpClientVaultPut() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		$vault = $this->clientVault($this->GetActionParam('vault', ''));
+		$publicKey = $this->clientVaultPublicKey($this->GetActionParam('publicKey', ''));
+		if (!$account || !$vault || !$publicKey) {
+			$this->logWrite('Rejected malformed browser OpenPGP vault write.', \LOG_WARNING, 'OpenPGP');
+			return $this->FalseResponse();
+		}
+
+		$storage = $this->StorageProvider();
+		$storageType = \RainLoop\Providers\Storage\Enumerations\StorageType::ROOT;
+		$previous = (string) $storage->Get($account, $storageType, '.openpgp-client-vault', '');
+		$current = $this->clientVaultRecord($account);
+		$currentRevision = (int) ($current['revision'] ?? 0);
+		if ($currentRevision !== (int) $this->GetActionParam('expectedRevision', 0)) {
+			return $this->DefaultResponse([
+				'conflict' => true,
+				'revision' => $currentRevision
+			]);
+		}
+
+		$record = [
+			'version' => 2,
+			'revision' => $currentRevision + 1,
+			'vault' => $vault,
+			'publicKey' => $publicKey
+		];
+		$stored = $storage->Put(
+			$account,
+			$storageType,
+			'.openpgp-client-vault',
+			\json_encode($record, JSON_UNESCAPED_SLASHES)
+		);
+		if (!$stored) {
+			$this->logWrite('Unable to persist browser OpenPGP vault.', \LOG_WARNING, 'OpenPGP');
+			return $this->FalseResponse();
+		}
+		if (!$this->clientVaultPublicKeyPublished($account, $publicKey)) {
+			$restored = $this->restoreClientVaultRecord($account, $previous);
+			$this->logWrite(
+				'Browser OpenPGP vault rejected because WKD publication failed'
+					. ($restored ? '; previous vault restored.' : '; previous vault restoration failed.'),
+				$restored ? \LOG_WARNING : \LOG_ERR,
+				'OpenPGP'
+			);
+			return $this->FalseResponse();
+		}
+		if (0 === $currentRevision) {
+			// This deployment starts with newly generated browser-only identities.
+			$this->discardLegacyPrivateKeyState($account);
+		}
+		return $this->DefaultResponse($record + ['published' => true]);
+	}
+
+	/**
+	 * Returns only the encrypted MIME part. OpenPGP decryption is browser-only.
+	 */
+	public function DoPgpFetchEncryptedMessage() : array
+	{
+		$folder = (string) $this->GetActionParam('folder', '');
+		$uid = (int) $this->GetActionParam('uid', 0);
+		$partId = \trim((string) $this->GetActionParam('partId', ''));
+		if (!$folder || 0 >= $uid || !\preg_match('/^[0-9]+(?:\.[0-9]+)*$/D', $partId)) {
+			return $this->FalseResponse();
+		}
+
+		$data = '';
+		$this->initMailClientConnection();
+		$this->MailClient()->MessageMimeStream(
+			function ($resource) use (&$data) {
+				if (\is_resource($resource)) {
+					$data = (string) \stream_get_contents($resource);
+				}
+			},
+			$folder,
+			$uid,
+			$partId
+		);
+		return $this->DefaultResponse($data ?: false);
+	}
+
+	/**
+	 * WKD is a public-key lookup only. No result is imported into server GnuPG.
+	 */
+	public function DoPgpDiscoverPublicKey() : array
+	{
+		$parts = Wkd::emailParts($this->GetActionParam('email', ''));
+		if (!$parts) {
+			return $this->FalseResponse();
+		}
+		$email = $parts[0] . '@' . $parts[1];
+		$key = Keyservers::wkd($email, \max(500, \min(5000, (int) $this->GetActionParam('timeoutMs', 2000))));
+		return $this->DefaultResponse($key ? [
+			'email' => $email,
+			'key' => \base64_encode($key)
+		] : false);
 	}
 
 	private function gnuPGKeyHasEmail(array $key, string $email) : bool
@@ -41,53 +273,168 @@ trait Pgp
 		return false;
 	}
 
-	private function gnuPGHasUsablePublicKeyForEmail(\SnappyMail\PGP\PGPInterface $GPG, string $email) : bool
-	{
-		foreach (($GPG->allKeysInfo($email)['public'] ?? []) as $key) {
-			if ($this->gnuPGKeyCanEncrypt($key) && $this->gnuPGKeyHasEmail($key, $email)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	private function publishGnuPGWkdIndex(\SnappyMail\PGP\PGPInterface $GPG) : int
+	/**
+	 * Legacy-only input for exporting existing server keys. No current login or
+	 * browser request can write this historical passphrase data.
+	 */
+	private function gnuPGPassphraseVault() : array
 	{
 		$oAccount = $this->getMainAccountFromToken(false);
-		$accountParts = $oAccount ? Wkd::emailParts($oAccount->Email()) : null;
-		if (!$accountParts) {
-			return 0;
+		if (!$oAccount) {
+			return [];
 		}
-		$accountDomain = $accountParts[1];
-		$count = 0;
-		$published = [];
 
-		foreach (($GPG->allKeysInfo('')['public'] ?? []) as $key) {
-			if (!$this->gnuPGKeyCanEncrypt($key)) {
+		$data = $this->StorageProvider()->Get($oAccount, \RainLoop\Providers\Storage\Enumerations\StorageType::ROOT, '.gnupg-passphrases');
+		$data = $data ? \SnappyMail\Crypt::DecryptFromJSON($data, $oAccount->CryptKey()) : null;
+		return \is_array($data) ? $data : [];
+	}
+
+	private function gnuPGPassphraseCandidates(string $email = '') : array
+	{
+		$parts = Wkd::emailParts($email);
+		$email = $parts ? $parts[0] . '@' . $parts[1] : '';
+		$candidates = [];
+		foreach ($this->gnuPGPassphraseVault() as $entry) {
+			if (!\is_array($entry) || !\is_string($entry['passphrase'] ?? null) || '' === $entry['passphrase']) {
 				continue;
 			}
-
-			$fingerprint = $key['subkeys'][0]['fingerprint'] ?: $key['subkeys'][0]['keyid'];
-			$publicKey = $fingerprint ? $GPG->export($fingerprint) : '';
-			if (!$publicKey) {
-				continue;
+			if ($email && $email === ($entry['email'] ?? '')) {
+				$candidates[] = $entry['passphrase'];
 			}
+		}
+		foreach ($this->gnuPGPassphraseVault() as $entry) {
+			if (\is_array($entry) && \is_string($entry['passphrase'] ?? null) && '' !== $entry['passphrase']) {
+				$candidates[] = $entry['passphrase'];
+			}
+		}
+		return \array_values(\array_unique($candidates));
+	}
 
-			foreach (($key['uids'] ?? []) as $uid) {
-				foreach (['email', 'uid', 'name'] as $field) {
-					if (!empty($uid[$field]) && \preg_match('/[^\\s<>]+@[^\\s<>]+/', $uid[$field], $match)) {
-						$parts = Wkd::emailParts($match[0]);
-						$email = $parts ? $parts[0] . '@' . $parts[1] : '';
-						if ($email && empty($published[$email]) && $accountDomain === $parts[1] && Wkd::publish($email, $publicKey)) {
-							$published[$email] = true;
-							++$count;
-						}
+	/**
+	 * Encrypts one legacy export to a one-time browser public key in a fresh
+	 * temporary keyring. The temporary keyring is always removed before return.
+	 */
+	private function legacyTransportEnvelope(string $publicKey, string $privateArmor) : string
+	{
+		$temporaryHome = \rtrim(\sys_get_temp_dir(), '/') . '/sm-pgp-' . \bin2hex(\random_bytes(12));
+		$transport = null;
+		try {
+			\MailSo\Base\Utils::mkdir($temporaryHome);
+			$transport = GnuPG::getInstance($temporaryHome);
+			if (!$transport || !$transport->import($publicKey)) {
+				return '';
+			}
+			$fingerprint = '';
+			foreach (($transport->allKeysInfo('')['public'] ?? []) as $key) {
+				$fingerprint = (string) ($key['subkeys'][0]['fingerprint'] ?? $key['subkeys'][0]['keyid'] ?? '');
+				if ($fingerprint) {
+					break;
+				}
+			}
+			if (!$fingerprint) {
+				return '';
+			}
+			$transport->setArmor(true);
+			$transport->clearEncryptKeys();
+			$transport->addEncryptKey($fingerprint);
+			$envelope = $transport->encrypt($privateArmor);
+			return \is_string($envelope) && \str_contains($envelope, '-----BEGIN PGP MESSAGE-----')
+				? $envelope : '';
+		} catch (\Throwable $e) {
+			return '';
+		} finally {
+			$transport?->clearEncryptKeys();
+			unset($transport);
+			if (\is_dir($temporaryHome) && !\is_link($temporaryHome)) {
+				foreach (\glob($temporaryHome . '/*') ?: [] as $path) {
+					if (!\is_dir($path) || \is_link($path)) {
+						@\unlink($path);
 					}
+				}
+				\MailSo\Base\Utils::RecRmDir($temporaryHome);
+			}
+		}
+	}
+
+	/**
+	 * Transitional export only. Every legacy secret-key packet is placed in an
+	 * OpenPGP envelope addressed to a one-time public key generated in browser.
+	 */
+	public function DoPgpLegacyProtectedKeyExport() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		$transportPublicKey = $this->clientVaultPublicKey($this->GetActionParam('transportPublicKey', ''));
+		if (!$account || !$transportPublicKey) {
+			return $this->FalseResponse();
+		}
+		$root = $account ? \rtrim($this->StorageProvider()->GenerateFilePath(
+			$account,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::ROOT
+		), '/') : '';
+		$legacyHome = $root && \is_dir($root . '/.gnupg');
+		try {
+			$GPG = $legacyHome ? $this->GnuPG() : null;
+		} catch (\Throwable $e) {
+			$GPG = null;
+		}
+		$keys = [];
+		$detected = $legacyHome && !$GPG;
+		$complete = !$detected;
+		if ($account && $GPG) {
+			foreach (($GPG->allKeysInfo('')['private'] ?? []) as $key) {
+				if (!$this->gnuPGKeyHasEmail($key, $account->Email())) {
+					continue;
+				}
+				$detected = true;
+				$fingerprint = (string) ($key['subkeys'][0]['fingerprint'] ?? $key['subkeys'][0]['keyid'] ?? '');
+				if (!$fingerprint) {
+					$complete = false;
+					continue;
+				}
+				$armored = '';
+				foreach (\array_merge($this->gnuPGPassphraseCandidates($account->Email()), ['']) as $passphrase) try {
+					$armored = $GPG->export($fingerprint, new \SnappyMail\SensitiveString($passphrase));
+					if ($armored && \str_contains($armored, 'BEGIN PGP PRIVATE KEY')) {
+						break;
+					}
+				} catch (\Throwable $e) {
+					// Try the next legacy passphrase candidate without logging secret-key material.
+				}
+				$envelope = $armored
+					? $this->legacyTransportEnvelope($transportPublicKey, $armored) : '';
+				if ($envelope) {
+					$keys[] = $envelope;
+				} else {
+					$complete = false;
 				}
 			}
 		}
+		return $this->DefaultResponse([
+			'keys' => $keys,
+			'detected' => $detected,
+			'complete' => $complete
+		]);
+	}
 
-		return $count;
+	/**
+	 * Removes only legacy private-key state after the user has verified the
+	 * browser vault. Mail, account settings, public WKD output, and tunnels are
+	 * intentionally outside this operation.
+	 */
+	public function DoPgpLegacyPrivateKeyPurge() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		if (!$account || 'PURGE_LEGACY_PRIVATE_KEYS' !== $this->GetActionParam('confirm', '')) {
+			return $this->FalseResponse();
+		}
+		$record = $this->clientVaultRecord($account);
+		if (!$record || !$this->clientVaultPublicKeyPublished($account, $record['publicKey'])) {
+			return $this->FalseResponse();
+		}
+
+		$this->discardLegacyPrivateKeyState($account);
+		$this->logWrite('Legacy server OpenPGP private key state removed for ' . $account->Email(), \LOG_NOTICE, 'OpenPGP');
+		return $this->TrueResponse();
 	}
 
 	public function DoGetPGPKeys() : array
@@ -98,21 +445,6 @@ trait Pgp
 		foreach ($keys['public'] as $key) {
 			$result[] = $key['value'];
 		}
-		foreach ($keys['private'] as $key) {
-			$result[] = $key['value'];
-		}
-
-		$GPG = $this->GnuPG();
-		if ($GPG) {
-			$keys = $GPG->allKeysInfo('');
-			foreach ($keys['public'] as $key) {
-				$key = $GPG->export($key['subkeys'][0]['fingerprint'] ?: $key['subkeys'][0]['keyid']);
-				if ($key) {
-					$result[] = $key;
-				}
-			}
-		}
-
 		return $this->DefaultResponse(\array_values(\array_unique($result)));
 	}
 
@@ -185,160 +517,76 @@ trait Pgp
 
 	public function DoGnupgDecrypt() : array
 	{
-		$GPG = $this->GnuPG();
-		if (!$GPG) {
-			return $this->FalseResponse();
-		}
+		return $this->FalseResponse();
+	}
 
-		$oPassphrase = new \SnappyMail\SensitiveString($this->GetActionParam('passphrase', ''));
+	public function DoPgpDecryptFailureReport() : array
+	{
+		$clean = static function ($value, int $limit = 240) : string {
+			$value = \preg_replace('/[^\x20-\x7E]/', '?', (string) $value);
+			return \substr($value, 0, $limit);
+		};
 
-		$GPG->addDecryptKey($this->GetActionParam('keyId', ''), $oPassphrase);
-
-		$sData = $this->GetActionParam('data', '');
-		$oPart = null;
-		$result = [
-			'data' => null,
-			'signatures' => []
+		$fields = [
+			'folder=' . $clean($this->GetActionParam('folder', ''), 120),
+			'uid=' . (int) $this->GetActionParam('uid', 0),
+			'hash=' . $clean($this->GetActionParam('hash', ''), 120),
+			'reason=' . $clean($this->GetActionParam('reason', ''), 80),
+			'armoredBody=' . (int) (bool) $this->GetActionParam('armoredBody', 0),
+			'pgpEncrypted=' . (int) (bool) $this->GetActionParam('pgpEncrypted', 0),
+			'pgpDecrypted=' . (int) (bool) $this->GetActionParam('pgpDecrypted', 0)
 		];
-		if ($sData) {
-			$result = $GPG->decrypt($sData);
-//			$oPart = \MailSo\Mime\Part::FromString($result);
-		} else {
-			$this->initMailClientConnection();
-			$this->MailClient()->MessageMimeStream(
-				function ($rResource) use ($GPG, &$result, &$oPart) {
-					if (\is_resource($rResource)) try {
-						$result['data'] = $GPG->decryptStream($rResource);
-//						$oPart = \MailSo\Mime\Part::FromString($result);
-//						$GPG->decryptStream($rResource, $rStreamHandle);
-//						$oPart = \MailSo\Mime\Part::FromStream($rStreamHandle);
-					} catch (\Throwable $e) {
-						$result = $e;
-					}
-				},
-				$this->GetActionParam('folder', ''),
-				(int) $this->GetActionParam('uid', ''),
-				$this->GetActionParam('partId', '')
-			);
+
+		$error = $clean($this->GetActionParam('error', ''), 240);
+		if ($error) {
+			$fields[] = 'error=' . $error;
 		}
 
-		if ($oPart && $oPart->isPgpSigned()) {
-//			$GPG->verifyStream($oPart->SubParts[0]->Body, \stream_get_contents($oPart->SubParts[1]->Body));
-//			$result['signatures'] = $oPart->SubParts[0];
-		}
-
-		if ($result instanceof \Throwable) {
-			throw $result;
-		}
-
-		return $this->DefaultResponse($result);
+		$this->logWrite('OpenPGP browser decrypt failure: ' . \implode(' ', $fields), \LOG_WARNING, 'OpenPGP');
+		return $this->TrueResponse();
 	}
 
 	public function DoGnupgGetKeys() : array
 	{
-		$GPG = $this->GnuPG();
-		return $this->DefaultResponse($GPG ? $GPG->allKeysInfo('') : false);
+		return $this->DefaultResponse([
+			'public' => [],
+			'private' => []
+		]);
 	}
 
 	public function DoGnupgExportKey() : array
 	{
-		$oPassphrase = $this->GetActionParam('isPrivate', '')
-			? new \SnappyMail\SensitiveString($this->GetActionParam('passphrase', ''))
-			: null;
-		$GPG = $this->GnuPG();
-		return $this->DefaultResponse($GPG ? $GPG->export(
-			$this->GetActionParam('keyId', ''),
-			$oPassphrase
-		) : false);
+		return $this->FalseResponse();
 	}
 
 	public function DoGnupgGenerateKey() : array
 	{
-		$fingerprint = false;
-		$GPG = $this->GnuPG();
-		if ($GPG) {
-			$sName = $this->GetActionParam('name', '');
-			$sEmail = $this->GetActionParam('email', '');
-			$oPassphrase = new \SnappyMail\SensitiveString($this->GetActionParam('passphrase', ''));
-			$fingerprint = $GPG->generateKey(
-				$sName ? "{$sName} <{$sEmail}>" : $sEmail,
-				$oPassphrase
-			);
-			$fingerprint && $this->publishGnuPGWkdIndex($GPG);
-		}
-		return $this->DefaultResponse($fingerprint);
+		return $this->FalseResponse();
+	}
+
+	public function DoGnupgSavePassphrase() : array
+	{
+		return $this->FalseResponse();
 	}
 
 	public function DoGnupgDeleteKey() : array
 	{
-		$GPG = $this->GnuPG();
-		$sKeyId = $this->GetActionParam('keyId', '');
-		$bPrivate = !!$this->GetActionParam('isPrivate', 0);
-		return $this->DefaultResponse($GPG ? $GPG->deleteKey($sKeyId, $bPrivate) : false);
+		return $this->FalseResponse();
 	}
 
 	public function DoPgpImportKey() : array
 	{
 		$sKey = $this->GetActionParam('key', '');
-		$sKeyId = $this->GetActionParam('keyId', '');
-		$sEmail = $this->GetActionParam('email', '');
-
-		if (!$sKey) {
-			try {
-				if (!$sKeyId) {
-					if (\preg_match('/[^\\s<>]+@[^\\s<>]+/', $sEmail, $aMatch)) {
-						$sEmail = $aMatch[0];
-					}
-					if ($sEmail) {
-						$aKeys = Keyservers::index($sEmail);
-						if ($aKeys) {
-							$sKeyId = $aKeys[0]['keyid'];
-						}
-					}
-				}
-				if ($sKeyId) {
-					$sKey = Keyservers::get($sKeyId);
-				}
-			} catch (\Throwable $e) {
-				// ignore
-			}
-		}
-
-		$result = [];
-		if ($sKey) {
-			$sKey = \trim($sKey);
-			$result['backup'] = $this->GetActionParam('backup', '') && Backup::PGPKey($sKey);
-			$result['gnuPG'] = $this->GetActionParam('gnuPG', '') && ($GPG = $this->GnuPG()) && $GPG->import($sKey);
-			if ($result['gnuPG'] && isset($GPG)) {
-				$result['wkd'] = $this->publishGnuPGWkdIndex($GPG);
-			}
-		}
-
-		return $this->DefaultResponse($result);
+		return $this->DefaultResponse([
+			'accepted' => !!$this->clientVaultPublicKey($sKey),
+			'backup' => false,
+			'gnuPG' => false
+		]);
 	}
 
 	public function DoGnupgDiscoverKey() : array
 	{
-		$email = $this->GetActionParam('email', '');
-		$parts = Wkd::emailParts($email);
-		$GPG = $this->GnuPG();
-		if (!$parts || !$GPG) {
-			return $this->DefaultResponse(false);
-		}
-
-		$email = $parts[0] . '@' . $parts[1];
-		if ($this->gnuPGHasUsablePublicKeyForEmail($GPG, $email)) {
-			return $this->DefaultResponse(true);
-		}
-
-		$key = Keyservers::wkd($email);
-		if (!$key) {
-			return $this->DefaultResponse(false);
-		}
-
-		$import = $GPG->import($key);
-		$usable = $import && $this->gnuPGHasUsablePublicKeyForEmail($GPG, $email);
-		return $this->DefaultResponse($usable ? $import : false);
+		return $this->FalseResponse();
 	}
 
 	/**
@@ -356,35 +604,10 @@ trait Pgp
 	 */
 	public function DoPgpStoreKeyPair() : array
 	{
-		$publicKey  = $this->GetActionParam('publicKey', '');
-		$privateKey = $this->GetActionParam('privateKey', '');
-
-		$result = [
+		return $this->DefaultResponse([
 			'onServer' => [false, false],
-			'inGnuPG'  => [false, false]
-		];
-
-		$onServer = (int) $this->GetActionParam('onServer', 0);
-		if ($publicKey && $onServer & 1) {
-			$result['onServer'][0] = Backup::PGPKey($publicKey);
-		}
-		if ($privateKey && $onServer & 2) {
-			$result['onServer'][1] = Backup::PGPKey($privateKey);
-		}
-
-		$inGnuPG = (int) $this->GetActionParam('inGnuPG', 0);
-		if ($inGnuPG) {
-			$GPG = $this->GnuPG();
-			if ($publicKey && $inGnuPG & 1) {
-				$result['inGnuPG'][0] = $GPG->import($publicKey);
-			}
-			if ($privateKey && $inGnuPG & 2) {
-				$result['inGnuPG'][1] = $GPG->import($privateKey);
-			}
-		}
-
-//		$revocationCertificate = $this->GetActionParam('revocationCertificate', '');
-		return $this->DefaultResponse($result);
+			'inGnuPG' => [false, false]
+		]);
 	}
 
 	/**
@@ -457,57 +680,7 @@ trait Pgp
 			}
 		}
 
-		// Try by default as OpenPGP.js sets useGnuPG to 0
-		if ($this->GetActionParam('tryGnuPG', 1)) {
-			$GPG = $this->GnuPG();
-			if ($GPG) {
-				$info = $this->GnuPG()->verify($result['text'], $result['signature']);
-//				$info = $this->GnuPG()->verifyStream($fp, $result['signature']);
-				if (empty($info[0])) {
-					$result = false;
-				} else {
-					$info = $info[0];
-
-					/**
-					* https://code.woboq.org/qt5/include/gpg-error.h.html
-					* status:
-						0 = GPG_ERR_NO_ERROR
-						1 = GPG_ERR_GENERAL
-						9 = GPG_ERR_NO_PUBKEY
-						117440513 = General error
-						117440520 = Bad signature
-					*/
-
-					$summary = \defined('GNUPG_SIGSUM_VALID') ? [
-						GNUPG_SIGSUM_VALID => 'The signature is fully valid.',
-						GNUPG_SIGSUM_GREEN => 'The signature is good but one might want to display some extra information. Check the other bits.',
-						GNUPG_SIGSUM_RED => 'The signature is bad. It might be useful to check other bits and display more information, i.e. a revoked certificate might not render a signature invalid when the message was received prior to the cause for the revocation.',
-						GNUPG_SIGSUM_KEY_REVOKED => 'The key or at least one certificate has been revoked.',
-						GNUPG_SIGSUM_KEY_EXPIRED => 'The key or one of the certificates has expired. It is probably a good idea to display the date of the expiration.',
-						GNUPG_SIGSUM_SIG_EXPIRED => 'The signature has expired.',
-						GNUPG_SIGSUM_KEY_MISSING => 'Can’t verify due to a missing key or certificate.',
-						GNUPG_SIGSUM_CRL_MISSING => 'The CRL (or an equivalent mechanism) is not available.',
-						GNUPG_SIGSUM_CRL_TOO_OLD => 'Available CRL is too old.',
-						GNUPG_SIGSUM_BAD_POLICY => 'A policy requirement was not met.',
-						GNUPG_SIGSUM_SYS_ERROR => 'A system error occurred.',
-//						GNUPG_SIGSUM_TOFU_CONFLICT = 'A TOFU conflict was detected.',
-					] : [];
-
-					// Verified, so no need to return $result['text'] and $result['signature']
-					$result = [
-						'fingerprint' => $info['fingerprint'],
-						'validity' => $info['validity'],
-						'status' => $info['status'],
-						'summary' => $info['summary'],
-						'message' => \implode("\n", \array_filter($summary, function($k) use ($info) {
-							return $info['summary'] & $k;
-						}, ARRAY_FILTER_USE_KEY))
-					];
-				}
-			} else {
-				$result = false;
-			}
-		}
+		// The server only returns detached-signature material. Verification is browser-only.
 
 		return $this->DefaultResponse($result);
 	}

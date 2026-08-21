@@ -1,4 +1,4 @@
-<div class="btn-toolbar" data-bind="css: {'hasChecked':checkAll}">
+<div class="btn-toolbar" data-bind="css: {'hasChecked':messageList.hasChecked}">
 	<a class="btn btn-thin fontastic toggleLeft"></a>
 	<a class="btn buttonCompose onCheckedHide" data-bind="click: composeClick, css: {'btn-warning': composeInEdit, 'btn-success': !composeInEdit()}" data-i18n="[title]FOLDER_LIST/BUTTON_NEW_MESSAGE">
 		<i class="fontastic compose-plus">✚</i>
@@ -116,8 +116,12 @@
 		</menu>
 	</div>
 </div>
+<div class="messageActionUndo" role="status" aria-live="polite" data-bind="visible: swipeUndoVisible">
+	<span data-bind="text: swipeUndoText"></span>
+	<button type="button" data-bind="click: undoSwipeAction" data-i18n="MESSAGE_LIST/UNDO"></button>
+</div>
 
-<div class="messageList g-ui-user-select-none" data-bind="css: {'hideMessageListCheckbox': !useCheckboxesInList() }">
+<div class="messageList g-ui-user-select-none" data-bind="css: {'hideMessageListCheckbox': !useCheckboxesInList(), 'mobileSelectionMode': messageList.hasChecked }">
 	<div class="second-toolbar thm-message-list-top-toolbar">
 		<i class="checkboxCheckAll fontastic" data-bind="text: checkAll() ? (isIncompleteChecked() ? '▣' : '☑') : '☐'"></i>
 		<div class="search-input-wrp">
@@ -130,6 +134,22 @@
 		<div class="listThreadUidDesc" data-bind="visible: messageList.threadUid(), click: cancelThreadUid"
 			data-icon="⬅" data-i18n="MESSAGE_LIST/BACK_TO_MESSAGE_LIST"></div>
 		<div class="listSearchDesc" data-bind="visible: messageListSearchDesc(), text: messageListSearchDesc"></div>
+		<div class="listSelectionNotice" data-bind="visible: selectAllInViewVisible">
+			<span data-bind="text: pageSelectionText"></span>
+			<a href="#" class="g-ui-link" data-bind="click: selectAllInView, text: selectAllInViewText"></a>
+			<a href="#" class="g-ui-link" data-bind="click: clearSelection, text: clearSelectionText"></a>
+		</div>
+		<div class="listSelectionNotice" data-bind="visible: messageList.allSelectionLoading">
+			<i class="icon-spinner"></i>
+			<span data-bind="text: selectingAllText"></span>
+		</div>
+		<div class="listSelectionNotice allSelected" data-bind="visible: messageList.allSelected">
+			<span data-bind="text: allSelectionText"></span>
+			<a href="#" class="g-ui-link" data-bind="click: listSetAllSeen"
+				data-i18n="MESSAGE_LIST/MARK_FOLDER_READ"></a>
+			<a href="#" class="g-ui-link" data-bind="click: clearSelection, text: clearSelectionText"></a>
+		</div>
+		<div class="listSelectionNotice error" data-bind="visible: messageList.allSelectionError, text: messageList.allSelectionError"></div>
 		<div class="listDragOver" data-bind="css: {'viewAppendArea': dragOver() && !messageList.error() && !popupVisibility(), 'dragOverEnter': dragOverEnter }"
 			data-icon="⬇" data-i18n="MESSAGE_LIST/PUT_MESSAGE_HERE"></div>
 		<div class="listClear" data-bind="visible: clearListIsVisible()">
@@ -148,18 +168,38 @@
 			<div class="groupLabel" data-bind="text: label, click: $root.groupSearch" data-i18n="[title]GLOBAL/SEARCH"></div>
 			<!-- ko foreach: messages -->
 			<div class="messageListItem" data-bind="css: lineAsCss(), attr: {title: preview}">
-				<div class="messageCheckbox">
-					<div class="checkboxMessage fontastic" data-bind="text: checked() ? '☑' : '☐'"></div>
-				</div><div>
-					<div class="flagParent fontastic"></div>
-					<div class="senderParent" data-bind="attr: {title: senderClearEmailsString}, text: senderEmailsString"></div>
-					<div class="subjectParent" data-bind="text: subject"></div>
-					<div class="threads-len" data-bind="visible: 1 < threadsLen(), text: threadsLenText(), attr: {'data-unseen': threadUnseenLen() || null}"></div>
-					<div class="attachmentParent">
-						<i data-bind="css: attachmentIconClass"></i>
+				<div class="messageSwipeActions">
+					<div class="messageSwipeAction messageSwipeActionStart" aria-hidden="true">
+						<span data-swipe-label="archive">🗄 <span data-i18n="GLOBAL/TO_ARCHIVE"></span></span>
+						<span data-swipe-label="snooze">⏰ Remind</span>
 					</div>
-					<div class="sizeParent" data-bind="text: friendlySize()"></div>
-					<time data-bind="attr:{'data-time-format':$root.timeFormat()}, time: dateTimestamp"></time>
+					<div class="messageSwipeAction messageSwipeActionEnd">
+						<span data-swipe-label="spam" aria-hidden="true">⚠ <span data-i18n="GLOBAL/SPAM"></span></span>
+						<span data-swipe-label="delete">🗑 <span data-i18n="GLOBAL/DELETE"></span></span>
+					</div>
+				</div>
+				<div class="messageListItemForeground">
+					<div class="messageCheckbox" role="checkbox" tabindex="0" aria-label="Select message"
+						data-bind="attr: {'aria-checked': checked() ? 'true' : 'false'}">
+						<div class="checkboxMessage fontastic" data-bind="text: checked() ? '☑' : '☐'"></div>
+					</div><div class="messageListItemContent">
+						<div class="flagParent fontastic"></div>
+						<div class="senderParent" data-bind="attr: {title: senderClearEmailsString}, text: senderEmailsString"></div>
+						<div class="subjectParent" data-bind="text: subject"></div>
+						<span class="messageCategoryBadge" data-bind="visible: $root.smartArchiveEnabled() &amp;&amp; category(), text: categoryLabel,
+							attr: {title: categoryLabel, 'aria-label': categoryLabel, 'data-category': category}"></span>
+						<button type="button" class="receiptSuccessIcon deliverySuccessIcon" data-bind="visible: deliverySucceeded() &amp;&amp; !readSucceeded(), click: $root.showMessageReceipts,
+							clickBubble: false, attr: {title: $root.deliveryReceiptLabel, 'aria-label': $root.deliveryReceiptLabel}">✓</button>
+						<button type="button" class="receiptSuccessIcon readSuccessIcon" data-bind="visible: readSucceeded, click: $root.showMessageReceipts,
+							clickBubble: false, attr: {title: $root.readReceiptLabel, 'aria-label': $root.readReceiptLabel}">✓✓</button>
+						<div class="threads-len" role="button" tabindex="0" data-bind="visible: 1 < threadsLen(), text: threadsLenText(),
+							attr: {'data-unseen': threadUnseenLen() || null, 'aria-label': threadCountLabel}"></div>
+						<div class="attachmentParent">
+							<i data-bind="css: attachmentIconClass"></i>
+						</div>
+						<div class="sizeParent" data-bind="text: friendlySize()"></div>
+						<time data-bind="attr:{'data-time-format':$root.timeFormat()}, time: dateTimestamp"></time>
+					</div>
 				</div>
 			</div>
 			<!-- /ko -->
@@ -168,18 +208,38 @@
 		<!-- ko ifnot: listGrouped -->
 		<div class="messageListPlace" data-bind="dragmessages: 1, foreach: messageList" draggable="true">
 			<div class="messageListItem" data-bind="css: lineAsCss(), attr:{title:preview}">
-				<div class="messageCheckbox">
-					<div class="checkboxMessage fontastic" data-bind="text: checked() ? '☑' : '☐'"></div>
-				</div><div data-bind="attr:{style:indent()}, css:{reply:indent()}">
-					<div class="flagParent fontastic"></div>
-					<div class="senderParent" data-bind="attr: {title: senderClearEmailsString}, text: senderEmailsString"></div>
-					<div class="subjectParent" data-bind="text: subject"></div>
-					<div class="threads-len" data-bind="visible: 1 < threadsLen(), text: threadsLenText(), attr: {'data-unseen': threadUnseenLen() || null}"></div>
-					<div class="attachmentParent">
-						<i data-bind="css: attachmentIconClass"></i>
+				<div class="messageSwipeActions">
+					<div class="messageSwipeAction messageSwipeActionStart" aria-hidden="true">
+						<span data-swipe-label="archive">🗄 <span data-i18n="GLOBAL/TO_ARCHIVE"></span></span>
+						<span data-swipe-label="snooze">⏰ Remind</span>
 					</div>
-					<div class="sizeParent" data-bind="text: friendlySize()"></div>
-					<time data-time-format="AUTO" data-bind="time: dateTimestamp"></time>
+					<div class="messageSwipeAction messageSwipeActionEnd">
+						<span data-swipe-label="spam" aria-hidden="true">⚠ <span data-i18n="GLOBAL/SPAM"></span></span>
+						<span data-swipe-label="delete">🗑 <span data-i18n="GLOBAL/DELETE"></span></span>
+					</div>
+				</div>
+				<div class="messageListItemForeground">
+					<div class="messageCheckbox" role="checkbox" tabindex="0" aria-label="Select message"
+						data-bind="attr: {'aria-checked': checked() ? 'true' : 'false'}">
+						<div class="checkboxMessage fontastic" data-bind="text: checked() ? '☑' : '☐'"></div>
+					</div><div class="messageListItemContent" data-bind="attr:{style:indent()}, css:{reply:indent()}">
+						<div class="flagParent fontastic"></div>
+						<div class="senderParent" data-bind="attr: {title: senderClearEmailsString}, text: senderEmailsString"></div>
+						<div class="subjectParent" data-bind="text: subject"></div>
+						<span class="messageCategoryBadge" data-bind="visible: $root.smartArchiveEnabled() &amp;&amp; category(), text: categoryLabel,
+							attr: {title: categoryLabel, 'aria-label': categoryLabel, 'data-category': category}"></span>
+						<button type="button" class="receiptSuccessIcon deliverySuccessIcon" data-bind="visible: deliverySucceeded() &amp;&amp; !readSucceeded(), click: $root.showMessageReceipts,
+							clickBubble: false, attr: {title: $root.deliveryReceiptLabel, 'aria-label': $root.deliveryReceiptLabel}">✓</button>
+						<button type="button" class="receiptSuccessIcon readSuccessIcon" data-bind="visible: readSucceeded, click: $root.showMessageReceipts,
+							clickBubble: false, attr: {title: $root.readReceiptLabel, 'aria-label': $root.readReceiptLabel}">✓✓</button>
+						<div class="threads-len" role="button" tabindex="0" data-bind="visible: 1 < threadsLen(), text: threadsLenText(),
+							attr: {'data-unseen': threadUnseenLen() || null, 'aria-label': threadCountLabel}"></div>
+						<div class="attachmentParent">
+							<i data-bind="css: attachmentIconClass"></i>
+						</div>
+						<div class="sizeParent" data-bind="text: friendlySize()"></div>
+						<time data-time-format="AUTO" data-bind="time: dateTimestamp"></time>
+					</div>
 				</div>
 			</div>
 		</div>

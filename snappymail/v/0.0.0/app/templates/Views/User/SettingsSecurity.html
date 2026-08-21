@@ -5,6 +5,7 @@
 		<div data-bind="component: {
 			name: 'Select',
 			params: {
+				enable: autoLogoutEnabled,
 				options: autoLogoutOptions,
 				value: autoLogout,
 				trigger: autoLogoutTrigger,
@@ -13,18 +14,20 @@
 			}
 		}"></div>
 	</div>
-	<div class="control-group">
-		<label data-i18n="SETTINGS_SECURITY/FORGET_KEY_PASS"></label>
-		<div data-bind="component: {
-			name: 'Select',
-			params: {
-				options: autoLogoutOptions,
-				value: keyPassForget,
-				trigger: keyPassForgetTrigger,
-				optionsText: 'name',
-				optionsValue: 'id'
-			}
-		}"></div>
+	<div class="control-group auto-logout-disable">
+		<label></label>
+		<div>
+			<div data-bind="component: {
+				name: 'Checkbox',
+				params: {
+					label: 'SETTINGS_SECURITY/DISABLE_AUTOLOGOUT',
+					value: autoLogoutDisabled
+				}
+			}"></div>
+			<div class="alert alert-error auto-logout-warning" role="alert" style="display:none"
+				data-bind="visible: autoLogoutDisabled"
+				data-i18n="SETTINGS_SECURITY/DISABLE_AUTOLOGOUT_WARNING"></div>
+		</div>
 	</div>
 </div>
 

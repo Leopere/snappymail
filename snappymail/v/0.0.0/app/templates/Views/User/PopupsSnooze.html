@@ -1,0 +1,28 @@
+<header>
+	<a href="#" class="close" data-bind="click: close">×</a>
+	<h3 data-i18n="SNOOZE/TITLE"></h3>
+</header>
+<div class="modal-body">
+	<p class="snoozeSubject" data-bind="text: subject"></p>
+	<div class="snoozeChoices">
+		<button type="button" class="btn" data-bind="click: chooseLaterToday, disable: saving">
+			<span aria-hidden="true">◷</span> <span data-i18n="SNOOZE/LATER_TODAY"></span>
+		</button>
+		<button type="button" class="btn" data-bind="click: chooseTomorrow, disable: saving">
+			<span aria-hidden="true">☀</span> <span data-i18n="SNOOZE/TOMORROW"></span>
+		</button>
+		<button type="button" class="btn" data-bind="click: chooseNextWeek, disable: saving">
+			<span aria-hidden="true">▦</span> <span data-i18n="SNOOZE/NEXT_WEEK"></span>
+		</button>
+	</div>
+	<label class="snoozeCustom">
+		<span data-i18n="SNOOZE/CUSTOM"></span>
+		<input type="datetime-local" data-bind="value: customWakeAt, disable: saving">
+	</label>
+	<button type="button" class="btn btn-primary snoozeCustomSubmit"
+		data-bind="click: chooseCustom, enable: customValid" data-i18n="SNOOZE/REMIND_ME"></button>
+	<p class="alert alert-error" role="alert" data-bind="visible: error, text: error"></p>
+	<p class="snoozeSaving" aria-live="polite" data-bind="visible: saving">
+		<i class="icon-spinner"></i> <span data-i18n="SNOOZE/SAVING"></span>
+	</p>
+</div>

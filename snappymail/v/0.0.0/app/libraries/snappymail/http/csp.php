@@ -18,10 +18,14 @@ class CSP implements \Stringable
 	private $directives = [
 		'base-uri' => ["'self'"],
 		'default-src' => ["'self'", 'data:'],
+		'form-action' => ["'self'"],
+		'frame-ancestors' => ["'none'"],
+		'object-src' => ["'none'"],
 		// Knockout.js requires eval() for observable binding purposes
 		// Safari < 15.4 does not support strict-dynamic
 //		'script-src' => ["'strict-dynamic'", "'unsafe-eval'"],
-		'script-src' => ["'self'", "'unsafe-eval'"],
+		'script-src' => ["'self'", "'unsafe-eval'", "'wasm-unsafe-eval'"],
+		'worker-src' => ["'self'"],
 		// Knockout.js requires unsafe-inline?
 //		'script-src' => ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
 		'img-src' => ["'self'", 'data:'],
@@ -83,7 +87,7 @@ class CSP implements \Stringable
 		} else {
 			\header('Content-Security-Policy: ' . $this);
 		}
-		if (empty($this->directives['frame-ancestors']) || \in_array('none', $this->directives['frame-ancestors'])) {
+		if (empty($this->directives['frame-ancestors']) || \in_array("'none'", $this->directives['frame-ancestors'], true)) {
 			\header('X-Frame-Options: DENY');
 		} else {
 //			\header('X-Frame-Options: SAMEORIGIN');

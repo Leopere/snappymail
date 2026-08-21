@@ -21,12 +21,7 @@ class Backup
 				true
 			);
 			if (\str_contains($key, 'PGP PRIVATE KEY')) {
-				$hash = $oAccount->CryptKey();
-				$key = \SnappyMail\Crypt::Encrypt($key, $hash);
-				$key[1] = \base64_encode($key[1]);
-				$key[2] = \base64_encode($key[2]);
-				$key[3] = \hash_hmac('sha1', $key[2], $hash);
-				return !!\file_put_contents("{$dir}{$keyId}.key", \json_encode($key));
+				return false;
 			}
 			if (\str_contains($key, 'PGP PUBLIC KEY')) {
 				return !!\file_put_contents("{$dir}{$keyId}_public.asc", $key);
@@ -56,23 +51,30 @@ class Backup
 							'id' => \basename($file),
 							'value' => \file_get_contents($file),
 						];
-					} else if ('.key' === \substr($file, -4)) {
-						$key = \json_decode(\file_get_contents($file));
-						if (\is_array($key)) {
-							$mac = \array_pop($key);
-							$hash = $oAccount->CryptKey();
-							if (!empty($key[2]) && \hash_hmac('sha1', $key[2], $hash) === $mac) {
-								$key[1] = \base64_decode($key[1]);
-								$key[2] = \base64_decode($key[2]);
-								$result['private'][] = [
-									'id' => \basename($file),
-									'value' => \SnappyMail\Crypt::Decrypt($key, $hash),
-								];
-							}
-						}
 					}
 				}
 			}
+		}
+		return $result;
+	}
+
+	public static function clearPrivateKeys() : bool
+	{
+		$oActions = \RainLoop\Api::Actions();
+		$oAccount = $oActions->getAccountFromToken(false);
+		if (!$oAccount) {
+			return false;
+		}
+		$dir = $oActions->StorageProvider()->GenerateFilePath(
+			$oAccount,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::PGP
+		);
+		if (!$dir || !\is_dir($dir)) {
+			return true;
+		}
+		$result = true;
+		foreach (\glob("{$dir}*.key") as $file) {
+			$result = \unlink($file) && $result;
 		}
 		return $result;
 	}

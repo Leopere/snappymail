@@ -48,6 +48,58 @@ class ServiceActions
 		return $this->oActions->SettingsProvider();
 	}
 
+	private static function actionLogKeyIsSensitive(string $key) : bool
+	{
+		$key = \strtolower(\preg_replace('/[^a-z0-9]/i', '', $key));
+		return \str_contains($key, 'pass')
+			|| \str_contains($key, 'secret')
+			|| \str_contains($key, 'token')
+			|| \str_contains($key, 'apikey')
+			|| \str_contains($key, 'privatekey')
+			|| \str_contains($key, 'authorization')
+			|| \str_contains($key, 'credential');
+	}
+
+	private static function actionLogKeyIsPrivateForMethod(string $key, string $method) : bool
+	{
+		$key = \strtolower(\preg_replace('/[^a-z0-9]/i', '', $key));
+		if (\str_starts_with($method, 'DoPluginRockSign')) {
+			return !\in_array($key, ['action', 'xtoken', 'templateid', 'delivery', 'submissionid', 'filekey'], true);
+		}
+		if (\in_array($method, ['DoSendMessage', 'DoSaveMessage'], true)) {
+			return !\in_array($key, [
+				'action', 'xtoken', 'identityid', 'messagefolder', 'messageuid', 'savefolder',
+				'markasimportant', 'dsn', 'requiretls', 'readreceiptrequest'
+			], true);
+		}
+		return false;
+	}
+
+	private static function maskActionLogValue($value, callable $mask) : void
+	{
+		if (\is_array($value)) {
+			foreach ($value as $item) {
+				static::maskActionLogValue($item, $mask);
+			}
+		} else if (\is_scalar($value) && \strlen((string) $value)) {
+			$mask((string) $value);
+		}
+	}
+
+	private static function redactActionLogParams(array $params, callable $mask, string $method = '') : array
+	{
+		foreach ($params as $key => $value) {
+			if (static::actionLogKeyIsSensitive((string) $key)
+				|| static::actionLogKeyIsPrivateForMethod((string) $key, $method)) {
+				static::maskActionLogValue($value, $mask);
+				$params[$key] = '*******';
+			} else if (\is_array($value)) {
+				$params[$key] = static::redactActionLogParams($value, $mask, $method);
+			}
+		}
+		return $params;
+	}
+
 	public function SetPaths(array $aPaths) : self
 	{
 		$this->aPaths = $aPaths;
@@ -66,11 +118,39 @@ class ServiceActions
 		return Utils::jsonEncode(\SnappyMail\Branding::manifest());
 	}
 
+	private function wellKnownHostAllowsDomain(string $host, string $domain) : bool
+	{
+		$host = \SnappyMail\PGP\Wkd::normalizeHost($host);
+		$domain = \SnappyMail\PGP\Wkd::normalizeDomain($domain);
+		return $host && $domain && ($host === $domain || \str_ends_with($host, '.' . $domain));
+	}
+
+	private function wellKnownHostMatchesWkd(string $host, string $domain, bool $advanced) : bool
+	{
+		$host = \SnappyMail\PGP\Wkd::normalizeHost($host);
+		$domain = \SnappyMail\PGP\Wkd::normalizeDomain($domain);
+		return $host && $domain && ($advanced ? $host === 'openpgpkey.' . $domain : $host === $domain);
+	}
+
+	private function wellKnownNotFound() : string
+	{
+		\MailSo\Base\Http::StatusHeader(404);
+		\header('Content-Type: text/plain; charset=utf-8');
+		\header('Content-Length: 0');
+		return '';
+	}
+
+	private function wellKnownNoStoreHeaders() : void
+	{
+		\header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+		\header('Pragma: no-cache');
+		\header('Expires: 0');
+	}
+
 	public function ServiceWellKnown() : string
 	{
 		if ('openpgpkey' !== ($this->aPaths[1] ?? '')) {
-			\MailSo\Base\Http::StatusHeader(404);
-			return '';
+			return $this->wellKnownNotFound();
 		}
 
 		$method = $this->oHttp->GetMethod();
@@ -80,31 +160,65 @@ class ServiceActions
 		}
 
 		$paths = \array_values($this->aPaths);
-		if ('policy' === ($paths[2] ?? '') || (!empty($paths[2]) && 'policy' === ($paths[3] ?? ''))) {
+		if ((3 === \count($paths) && 'policy' === ($paths[2] ?? ''))
+			|| (4 === \count($paths) && !empty($paths[2]) && 'policy' === ($paths[3] ?? ''))) {
+			if (4 === \count($paths)
+				&& !$this->wellKnownHostMatchesWkd($this->oHttp->GetHost(false, true), $paths[2], true)) {
+				return $this->wellKnownNotFound();
+			}
 			\header('Content-Type: text/plain; charset=utf-8');
+			\header('Content-Length: 0');
 			return 'HEAD' === $method ? '' : '';
+		}
+
+		if ((3 === \count($paths) && 'index.json' === ($paths[2] ?? ''))
+			|| (4 === \count($paths) && !empty($paths[2]) && 'index.json' === ($paths[3] ?? ''))) {
+			$host = $this->oHttp->GetHost(false, true);
+			$domain = 4 === \count($paths) ? (string) $paths[2] : $host;
+			if (!$this->wellKnownHostAllowsDomain($host, $domain)) {
+				return $this->wellKnownNotFound();
+			}
+
+			$advanced = 4 === \count($paths);
+			$domain = \SnappyMail\PGP\Wkd::normalizeDomain($domain);
+			$host = \SnappyMail\PGP\Wkd::normalizeHost($host);
+			if (!$advanced && $host === $domain) {
+				$baseUrl = "https://{$domain}/.well-known/openpgpkey";
+			} else {
+				$baseUrl = "https://openpgpkey.{$domain}/.well-known/openpgpkey/{$domain}";
+			}
+			$json = Utils::jsonEncode(\SnappyMail\PGP\Wkd::manifest($domain, $baseUrl));
+			$this->wellKnownNoStoreHeaders();
+			\header('Content-Type: application/json; charset=utf-8');
+			\header('Content-Length: ' . \strlen($json));
+			return 'HEAD' === $method ? '' : $json;
 		}
 
 		$domain = '';
 		$hash = '';
-		if ('hu' === ($paths[2] ?? '') && !empty($paths[3])) {
+		if (4 === \count($paths) && 'hu' === ($paths[2] ?? '') && !empty($paths[3])) {
 			$domain = $this->oHttp->GetHost(false, true);
 			$hash = $paths[3];
-		} else if (!empty($paths[2]) && 'hu' === ($paths[3] ?? '') && !empty($paths[4])) {
+		} else if (5 === \count($paths) && !empty($paths[2]) && 'hu' === ($paths[3] ?? '') && !empty($paths[4])) {
 			$domain = $paths[2];
 			$hash = $paths[4];
+		}
+
+		$host = $this->oHttp->GetHost(false, true);
+		$advanced = 5 === \count($paths);
+		if ($domain && !$this->wellKnownHostMatchesWkd($host, $domain, $advanced)) {
+			return $this->wellKnownNotFound();
 		}
 
 		$key = $domain && $hash
 			? \SnappyMail\PGP\Wkd::read($domain, $hash, $_GET['l'] ?? '')
 			: '';
 		if (!$key) {
-			\MailSo\Base\Http::StatusHeader(404);
-			return '';
+			return $this->wellKnownNotFound();
 		}
 
 		\MailSo\Base\Http::setETag('wkd-' . \sha1($domain . '/' . $hash . '/' . $key));
-		\header('Cache-Control: public, max-age=3600');
+		$this->wellKnownNoStoreHeaders();
 		\header('Content-Type: application/octet-stream');
 		\header('Content-Length: ' . \strlen($key));
 		return 'HEAD' === $method ? '' : $key;
@@ -123,6 +237,7 @@ class ServiceActions
 	public function ServiceJson() : string
 	{
 		\ob_start();
+		$requestStartedAt = \microtime(true);
 
 		$aResponse = null;
 		$oException = null;
@@ -150,14 +265,14 @@ class ServiceActions
 					if ($_SERVER['HTTP_X_SM_TOKEN'] !== $token) {
 						$oAccount = $this->oActions->getAccountFromToken(false);
 						$sEmail = $oAccount ? $oAccount->Email() : 'guest';
-						$this->oActions->logWrite("{$_SERVER['HTTP_X_SM_TOKEN']} !== {$token} for {$sEmail}", \LOG_ERR, 'Token');
+						$this->oActions->logWrite("HTTP token mismatch for {$sEmail}", \LOG_ERR, 'Token');
 						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'HTTP Token mismatch');
 					}
 				} else if ($this->oHttp->IsPost()) {
 					if (empty($_POST['XToken']) || $_POST['XToken'] !== $token) {
 						$oAccount = $this->oActions->getAccountFromToken(false);
 						$sEmail = $oAccount ? $oAccount->Email() : 'guest';
-						$this->oActions->logWrite("{$_POST['XToken']} !== {$token} for {$sEmail}", \LOG_ERR, 'XToken');
+						$this->oActions->logWrite("XToken mismatch for {$sEmail}", \LOG_ERR, 'XToken');
 						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'XToken mismatch');
 					}
 				}
@@ -173,14 +288,9 @@ class ServiceActions
 
 			if ($_POST) {
 				$this->oActions->SetActionParams($_POST, $sMethodName);
-				$aPost = $_POST;
-				foreach ($aPost as $key => $value) {
-					// password & passphrase
-					if (false !== \stripos($key, 'pass')) {
-						$aPost[$key] = '*******';
-//						$this->oActions->logMask($value);
-					}
-				}
+				$aPost = static::redactActionLogParams($_POST, function (string $secret) : void {
+					$this->oActions->logMask($secret);
+				}, $sMethodName);
 				$this->oActions->logWrite(Utils::jsonEncode($aPost), \LOG_INFO, 'POST');
 			} else if (3 < \count($this->aPaths) && $this->oHttp->IsGet()) {
 				$this->oActions->SetActionParams(array(
@@ -214,6 +324,15 @@ class ServiceActions
 			}
 
 			$aResponse = $this->oActions->ExceptionResponse($oException);
+		}
+
+		$durationMs = (int) \round(1000 * (\microtime(true) - $requestStartedAt));
+		if (!\headers_sent()) {
+			\header('Server-Timing: snappymail;dur=' . $durationMs);
+		}
+		if (1000 <= $durationMs) {
+			$action = \preg_replace('/[^A-Za-z0-9._-]/', '?', (string) $sAction);
+			\SnappyMail\Log::warning('PERF', "json action={$action} result=" . ($oException ? 'error' : 'ok') . " total={$durationMs}ms");
 		}
 
 		$aResponse['Action'] = $sAction ?: 'Unknown';

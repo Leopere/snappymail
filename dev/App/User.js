@@ -6,6 +6,7 @@ import { mailToHelper, setLayoutResizer, dropdownsDetectVisibility, loadAccounts
 
 import {
 	FolderType,
+	ComposeType,
 	ClientSideKeyNameFolderListSize
 } from 'Common/EnumsUser';
 
@@ -40,6 +41,7 @@ import { MessagelistUserStore } from 'Stores/User/Messagelist';
 import { ThemeStore, initThemes } from 'Stores/Theme';
 import { LanguageStore } from 'Stores/Language';
 import { MessageUserStore } from 'Stores/User/Message';
+import { initSnooze } from 'Stores/User/Snooze';
 
 import Remote from 'Remote/User/Fetch';
 
@@ -61,6 +63,7 @@ import {
 	setRefreshFoldersInterval
 } from 'Common/Folders';
 import { loadFolders } from 'Model/FolderCollection';
+import { setupSmartArchiveFolders } from 'Classifier/SmartArchiveSetup';
 
 export class AppUser extends AbstractApp {
 	constructor() {
@@ -149,6 +152,7 @@ export class AppUser extends AbstractApp {
 	}
 
 	logout() {
+		PgpUserStore.forgetSessionSecrets();
 		Remote.request('Logout', (iError, data) =>
 			iError ? alert('Logout error: ' + getErrorMessage(iError, data))
 				: rl.logoutReload(Settings.app('customLogoutLink'))
@@ -183,10 +187,13 @@ export class AppUser extends AbstractApp {
 
 			SettingsUserStore.init();
 			ContactUserStore.init();
+			// Start loading the browser vault before an encrypted inbox item can open.
+			PgpUserStore.init();
 
-			loadFolders((success, error) => {
+			loadFolders(async (success, error) => {
 				try {
 					if (success) {
+						SettingsUserStore.smartArchiveEnabled() && await setupSmartArchiveFolders();
 						startScreens([
 							MailBoxUserScreen,
 							SettingsUserScreen
@@ -195,6 +202,7 @@ export class AppUser extends AbstractApp {
 						setRefreshFoldersInterval(SettingsGet('CheckMailInterval'));
 
 						loadAccountsAndIdentities();
+						initSnooze();
 
 						setTimeout(() => {
 							const cF = FolderUserStore.currentFolderFullName();
@@ -222,8 +230,7 @@ export class AppUser extends AbstractApp {
 
 						setInterval(reloadTime, 60000);
 
-						PgpUserStore.init();
-						SMimeUserStore.loadCertificates();
+							SMimeUserStore.loadCertificates();
 
 						setTimeout(() => mailToHelper(SettingsGet('mailToEmail')), 500);
 					} else {
@@ -241,12 +248,35 @@ export class AppUser extends AbstractApp {
 
 	showMessageComposer(params = [])
 	{
+		if (ComposeType.ForwardAsAttachment === params[0]) {
+			showScreenPopup(ComposePopupView, params);
+			return;
+		}
+
 		let msg = params[1];
 		if (1 == arrayLength(msg)) {
 			msg = msg[0];
 		}
-		if (msg) {
-			msg.decrypt().then((/*success*/)=>showScreenPopup(ComposePopupView, params));
+		if (msg?.decrypt) {
+			PgpUserStore.ready()
+				.then(ready => ready ? msg.decrypt() : false)
+				.then(success => {
+					const armorRemains = PgpUserStore.hasEncryptedArmor(msg.plain?.())
+						|| PgpUserStore.hasEncryptedArmor(msg.html?.());
+					if (success && !armorRemains) {
+						showScreenPopup(ComposePopupView, params);
+						return;
+					}
+					alert(i18n('CRYPTO/ERROR', {
+						TYPE: 'OpenPGP',
+						ERROR: msg.pgpEncrypted?.()?.error
+							|| 'This encrypted message has not been decrypted, so it cannot be forwarded as readable mail.'
+					}));
+				})
+				.catch(error => alert(i18n('CRYPTO/ERROR', {
+					TYPE: 'OpenPGP',
+					ERROR: error?.message || 'This encrypted message has not been decrypted.'
+				})));
 		} else {
 			showScreenPopup(ComposePopupView, params);
 		}
@@ -270,8 +300,19 @@ AskPopupView.password = function(sAskDesc, btnText, ask) {
 	});
 };
 
+let cryptkeyPromptPromise = null,
+	cryptkeyPromptDisabled = false;
+
 AskPopupView.cryptkey = () => new Promise(resolve => {
-	const fn = () => AskPopupView.showModal([
+	if (cryptkeyPromptDisabled) {
+		resolve(false);
+		return;
+	}
+	if (cryptkeyPromptPromise) {
+		cryptkeyPromptPromise.then(resolve);
+		return;
+	}
+	cryptkeyPromptPromise = new Promise(promptResolve => AskPopupView.showModal([
 		i18n('CRYPTO/ASK_CRYPTKEY_PASS'),
 		view => {
 			let pass = view.passphrase();
@@ -279,23 +320,26 @@ AskPopupView.cryptkey = () => new Promise(resolve => {
 				Remote.post('ResealCryptKey', null, {
 					passphrase: pass
 				}).then(response => {
-					resolve(response?.Result);
+					const success = !!response?.Result;
+					cryptkeyPromptDisabled = !success;
+					promptResolve(success);
 				}).catch(e => {
-					if (111 === e.code) {
-						fn();
-					} else {
-						console.error(e);
-						resolve(null);
-					}
+					console.error(e);
+					cryptkeyPromptDisabled = true;
+					promptResolve(false);
 				});
 			} else {
-				resolve(null);
+				cryptkeyPromptDisabled = true;
+				promptResolve(false);
 			}
 		},
-		() => resolve(null),
+		() => {
+			cryptkeyPromptDisabled = true;
+			promptResolve(false);
+		},
 		true,
 		1,
 		i18n('CRYPTO/DECRYPT')
-	]);
-	fn();
+	])).finally(() => cryptkeyPromptPromise = null);
+	cryptkeyPromptPromise.then(resolve);
 });

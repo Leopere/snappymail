@@ -33,5 +33,6 @@
 /vendors/squire2
 !/vendors/squire2/dist
 /vendors/vanillaqr.js/
+/vendors/email-classifier/dist/
 /integrations/nextcloud/rainloop
 /integrations/owncloud/rainloop

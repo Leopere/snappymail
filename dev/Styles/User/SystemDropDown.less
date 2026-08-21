@@ -1,5 +1,10 @@
 
 #top-system-dropdown-id {
+	align-items: center;
+	box-sizing: border-box;
+	display: inline-flex;
+	gap: 6px;
+	height: 36px;
 	padding: 0 6px;
 }
 
@@ -10,11 +15,22 @@
 
 #V-SystemDropDown {
 
+	box-sizing: border-box;
+	display: flex;
+	justify-content: flex-end;
+	left: 0;
+	pointer-events: none;
 	position: absolute;
 	top: 0;
 	right: 0;
+	width: 100%;
 	padding: 10px @rlLowMargin;
 	z-index: 103;
+
+	> .btn-toolbar {
+		flex: 0 1 auto;
+		pointer-events: auto;
+	}
 
 	.email-title {
 		text-overflow: ellipsis;
@@ -47,11 +63,12 @@
 	}
 
 	.accountPlace {
+		align-items: center;
 		border-right: 1px solid var(--btn-border-clr, rgba(0, 0, 0, 0.2));
-		display: inline-block;
+		display: inline-flex;
 		font-weight: 600;
 		line-height: 1.3;
-		margin: 0 6px -4px 0;
+		margin: 0;
 		max-width: 25vw;
 /*		max-width: calc(100vw - 300px);*/
 		overflow: hidden;

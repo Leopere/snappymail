@@ -332,11 +332,12 @@ viewMessage = (oMessage, popup) => {
 
 populateMessageBody = (oMessage, popup) => {
 	if (oMessage) {
-		popup || MessageUserStore.message(oMessage);
 		if (oMessage.body) {
+			popup || MessageUserStore.message(oMessage);
 			viewMessage(oMessage, popup);
 		} else {
 			popup || MessageUserStore.loading(true);
+			popup || MessageUserStore.message(oMessage);
 			Remote.message((iError, oData/*, bCached*/) => {
 				if (iError) {
 					if (Notifications.RequestAborted !== iError && !popup) {

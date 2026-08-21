@@ -2,16 +2,32 @@
 import { ParseMime } from 'Mime/Parser';
 import { AttachmentModel } from 'Model/Attachment';
 import { FileInfo } from 'Common/File';
-import { BEGIN_PGP_MESSAGE } from 'Stores/User/Pgp';
+import { BEGIN_PGP_SIGNED_MESSAGE, PgpUserStore } from 'Stores/User/Pgp';
 
 import { EmailModel } from 'Model/Email';
+
+const resetCryptoState = (message, options) => {
+	const
+		pgpEncrypted = options.preservePgpEncrypted ? message.pgpEncrypted?.() : null,
+		smimeEncrypted = options.preserveSmimeEncrypted ? message.smimeEncrypted?.() : null;
+
+	message.pgpSigned?.(null);
+	message.pgpEncrypted?.(pgpEncrypted);
+	message.pgpDecrypted?.(false);
+	message.smimeSigned?.(null);
+	message.smimeEncrypted?.(smimeEncrypted);
+	message.smimeDecrypted?.(false);
+};
 
 /**
  * @param string data
  * @param MessageModel message
+ * @param {Object=} options
  */
-export function MimeToMessage(data, message)
+export function MimeToMessage(data, message, options = {})
 {
+	resetCryptoState(message, options);
+
 	const struct = ParseMime(data);
 	if (struct.headers) {
 		let html = struct.getByContentType('text/html'),
@@ -69,6 +85,10 @@ export function MimeToMessage(data, message)
 				let protocol = type.params.protocol;
 				if ('application/pgp-signature' === protocol) {
 					message.pgpSigned({
+						detected: true,
+						checked: false,
+						checking: false,
+						success: null,
 						micAlg: type.micalg,
 						bodyPart: part.parts[0],
 						sigPart: part.parts[1]
@@ -97,7 +117,15 @@ export function MimeToMessage(data, message)
 		message.plain(data);
 	}
 
-	if (message.plain().includes(BEGIN_PGP_MESSAGE)) {
-		message.pgpSigned(true);
+	if (message.plain().includes(BEGIN_PGP_SIGNED_MESSAGE)) {
+		message.pgpSigned({
+			detected: true,
+			checked: false,
+			checking: false,
+			success: null
+		});
+	}
+	if (PgpUserStore.isEncrypted(message.plain())) {
+		message.pgpEncrypted(message.pgpEncrypted() || { partId: '', keyIds: [] });
 	}
 }

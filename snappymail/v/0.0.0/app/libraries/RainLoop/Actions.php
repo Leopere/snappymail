@@ -609,7 +609,8 @@ class Actions
 						'UseCheckboxesInList' => (bool) $oConfig->Get('defaults', 'view_use_checkboxes', true),
 						'showNextMessage' => (bool) $oConfig->Get('defaults', 'view_show_next_message', false),
 						'AutoLogout' => (int) $oConfig->Get('defaults', 'autologout', 30),
-						'keyPassForget' => 15,
+						'AutoLogoutDisabled' => false,
+						'keyPassForget' => 30,
 						'AllowDraftAutosave' => (bool) $oConfig->Get('defaults', 'allow_draft_autosave', true),
 						'ContactsAutosave' => (bool) $oConfig->Get('defaults', 'contacts_autosave', true)
 					],
@@ -634,15 +635,7 @@ class Actions
 				);
 
 				if ($aResult['contactsAllowed'] && $oConfig->Get('contacts', 'allow_sync', false)) {
-					$aData = $this->getContactsSyncData($oAccount) ?: [
-						'Mode' => 0,
-						'Url' => '',
-						'User' => ''
-					];
-					$aData['Password'] = empty($aData['Password']) ? '' : static::APP_DUMMY;
-					$aData['Interval'] = \max(20, \min(320, (int) $oConfig->Get('contacts', 'sync_interval', 20)));
-					unset($aData['PasswordHMAC']);
-					$aResult['ContactsSync'] = $aData;
+					$aResult['ContactsSync'] = $this->contactsSyncPublicData($this->getContactsSyncData($oAccount));
 				}
 
 				$sToken = \SnappyMail\Cookies::get(self::AUTH_MAILTO_TOKEN_KEY);
@@ -671,7 +664,10 @@ class Actions
 
 					$aResult['EditorDefaultType'] = \str_replace('Forced', '', $oSettings->GetConf('EditorDefaultType', $aResult['EditorDefaultType']));
 					$aResult['editorWysiwyg'] = $oSettings->GetConf('editorWysiwyg', $aResult['editorWysiwyg']);
-					$aResult['requestReadReceipt'] = (bool) $oSettings->GetConf('requestReadReceipt', false);
+					$aResult['requestReadReceipt'] = (bool) $oSettings->GetConf(
+						'requestReadReceipt',
+						$oConfig->Get('defaults', 'request_read_receipt', true)
+					);
 					$aResult['requestDsn'] = (bool) $oSettings->GetConf('requestDsn', false);
 					$aResult['requireTLS'] = (bool) $oSettings->GetConf('requireTLS', false);
 					$aResult['pgpSign'] = (bool) $oSettings->GetConf('pgpSign', false);
@@ -703,8 +699,10 @@ class Actions
 					$aResult['UseCheckboxesInList'] = (bool)$oSettings->GetConf('UseCheckboxesInList', $aResult['UseCheckboxesInList']);
 					$aResult['showNextMessage'] = (bool)$oSettings->GetConf('showNextMessage', $aResult['showNextMessage']);
 					$aResult['AllowDraftAutosave'] = (bool)$oSettings->GetConf('AllowDraftAutosave', $aResult['AllowDraftAutosave']);
-					$aResult['AutoLogout'] = (int)$oSettings->GetConf('AutoLogout', $aResult['AutoLogout']);
-					$aResult['keyPassForget'] = (int)$oSettings->GetConf('keyPassForget', $aResult['keyPassForget']);
+					$aResult['AutoLogout'] = \max(5, \min(1440,
+						(int)$oSettings->GetConf('AutoLogout', $aResult['AutoLogout']) ?: 30));
+					$aResult['AutoLogoutDisabled'] = (bool)$oSettings->GetConf('AutoLogoutDisabled', false);
+					$aResult['keyPassForget'] = $aResult['AutoLogout'];
 					$aResult['Layout'] = (int)$oSettings->GetConf('Layout', $aResult['Layout']);
 					$aResult['Resizer4Width'] = (int)$oSettings->GetConf('Resizer4Width', 0);
 					$aResult['Resizer5Width'] = (int)$oSettings->GetConf('Resizer5Width', 0);
@@ -778,8 +776,20 @@ class Actions
 		$bAppJsDebug = $this->oConfig->Get('debug', 'javascript', false)
 			|| $this->oConfig->Get('debug', 'enable', false);
 
-		$aResult['StaticLibsJs'] = Utils::WebStaticPath('js/' . ($bAppJsDebug ? '' : 'min/') .
-			'libs' . ($bAppJsDebug ? '' : '.min') . '.js');
+		$sStaticLibsJsFile = 'js/' . ($bAppJsDebug ? '' : 'min/') . 'libs' . ($bAppJsDebug ? '' : '.min') . '.js';
+		$aResult['StaticLibsJs'] = Utils::WebStaticPath($sStaticLibsJsFile);
+		$sStaticAppJsFile = 'js/' . ($bAppJsDebug ? '' : 'min/') .
+			($bAdmin ? 'admin' : 'app') . ($bAppJsDebug ? '' : '.min') . '.js';
+		$iStaticJsVersion = \max(...\array_map(
+			fn($sFile) => \is_file($sFile) ? \filemtime($sFile) : 0,
+			[
+				APP_VERSION_ROOT_PATH . 'static/' . $sStaticLibsJsFile,
+				APP_VERSION_ROOT_PATH . 'static/' . $sStaticAppJsFile
+			]
+		));
+		if ($iStaticJsVersion) {
+			$aResult['StaticLibsJs'] .= '?v=' . $iStaticJsVersion;
+		}
 
 		$this->oPlugins->InitAppData($bAdmin, $aResult, $oAccount);
 

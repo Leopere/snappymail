@@ -28,6 +28,15 @@ class MailClient
 {
 	use \MailSo\Log\Inherit;
 
+	private const SUCCESSFUL_DELIVERY_RECEIPT_SEARCH =
+		'HEADER Content-Type "multipart/report" SUBJECT "Successful Mail Delivery Report"';
+	private const READ_RECEIPT_SEARCH =
+		'HEADER Content-Type "disposition-notification"';
+	private const DELIVERY_RECEIPT_PROCESSED_FLAG = '$DeliveryProcessed';
+	private const DELIVERY_SUCCESS_FLAG = '$DeliverySuccess';
+	private const READ_RECEIPT_PROCESSED_FLAG = '$ReadProcessed';
+	private const READ_SUCCESS_FLAG = '$ReadSuccess';
+
 	private \MailSo\Imap\ImapClient $oImapClient;
 
 	private bool $bThreadSort = false;
@@ -74,6 +83,9 @@ class MailClient
 			MimeHeader::X_CONFIRM_READING_TO,
 			MimeHeader::AUTHENTICATION_RESULTS,
 			MimeHeader::X_DKIM_AUTHENTICATION_RESULTS,
+			MimeHeader::AUTO_SUBMITTED,
+			MimeHeader::PRECEDENCE,
+			MimeHeader::LIST_ID,
 			MimeHeader::LIST_UNSUBSCRIBE,
 			// https://autocrypt.org/level1.html#the-autocrypt-header
 			MimeHeader::AUTOCRYPT
@@ -429,6 +441,19 @@ class MailClient
 	}
 
 	/**
+	 * Resolve a requested algorithm to the strongest algorithm the server
+	 * actually supports. An empty, invalid, or unavailable preference must not
+	 * make threading fail when another advertised algorithm is usable.
+	 */
+	protected function ResolveThreadAlgorithm(string $sAlgorithm = '') : string
+	{
+		return MessageListParams::resolveThreadAlgorithm(
+			$sAlgorithm,
+			$this->oImapClient->Capability() ?: []
+		);
+	}
+
+	/**
 	 * @throws \InvalidArgumentException
 	 * @throws \MailSo\RuntimeException
 	 * @throws \MailSo\Net\Exceptions\*
@@ -438,6 +463,11 @@ class MailClient
 	{
 		$oFolderInfo = $oMessageCollection->FolderInfo;
 		$sFolderName = $oFolderInfo->FullName;
+		$sAlgorithm = $this->ResolveThreadAlgorithm($sAlgorithm);
+		if (!\strlen($sAlgorithm)) {
+			$oMessageCollection->totalThreads = 0;
+			return [];
+		}
 
 		$sSearch = 'ALL';
 //		$sSearch = 'UNDELETED';
@@ -459,7 +489,7 @@ class MailClient
 */
 		$sSerializedHashKey = null;
 		if ($oCacher && $oCacher->IsInited()) {
-			$sSerializedHashKey = "ThreadsMap/{$sAlgorithm}/{$sSearch}/{$oFolderInfo->etag}";
+			$sSerializedHashKey = "ThreadsMap/v2/{$sAlgorithm}/{$sSearch}/{$oFolderInfo->etag}";
 //			$sSerializedHashKey = "ThreadsMap/{$sAlgorithm}/{$sSearch}/{$iThreadLimit}/{$oFolderInfo->etag}";
 
 			$sSerializedUids = $oCacher->Get($sSerializedHashKey);
@@ -512,15 +542,16 @@ class MailClient
 	}
 
 	// All threads UID's except the most recent UID of each thread
-	protected function ThreadsOldUids(array $aAllThreads, MessageCollection $oMessageCollection, ?\MailSo\Cache\CacheClient $oCacher, bool $bBackground = false) : array
+	protected function ThreadsOldUids(string $sAlgorithm, array $aAllThreads, MessageCollection $oMessageCollection, ?\MailSo\Cache\CacheClient $oCacher, bool $bBackground = false) : array
 	{
 		$oFolderInfo = $oMessageCollection->FolderInfo;
+		$sAlgorithm = $this->ResolveThreadAlgorithm($sAlgorithm);
 
 		$bThreadSort = $this->bThreadSort && $this->oImapClient->hasCapability('SORT');
 
 		$sSerializedHashKey = null;
 		if ($oCacher && $oCacher->IsInited()) {
-			$sSerializedHashKey = "ThreadsOldUids/{$oFolderInfo->etag}/" . ($bThreadSort ? 'S' : 'N');
+			$sSerializedHashKey = "ThreadsOldUids/v2/{$sAlgorithm}/{$oFolderInfo->etag}/" . ($bThreadSort ? 'S' : 'N');
 			$sSerializedUids = $oCacher->Get($sSerializedHashKey);
 			if (!empty($sSerializedUids)) {
 				$aSerializedUids = \json_decode($sSerializedUids, true);
@@ -660,6 +691,10 @@ class MailClient
 			$oParams->bHideDeleted,
 			$bUseCache
 		);
+		if ($oParams->bHideDeliveryReceipts) {
+			$oSearchCriterias->prepend('NOT (' . self::SUCCESSFUL_DELIVERY_RECEIPT_SEARCH . ')');
+			$oSearchCriterias->prepend('NOT (' . self::READ_RECEIPT_SEARCH . ')');
+		}
 		// Disable? as there are many cases that change the result
 //		$bUseCache = false;
 
@@ -725,6 +760,180 @@ class MailClient
 		return $aResultUids;
 	}
 
+	private function ReceiptPartHeaders(string $sFolderName, array $aReceiptUids, array $aContentTypes) : array
+	{
+		$this->oImapClient->FolderExamine($sFolderName);
+		$aPartGroups = array();
+		$aFetchResponses = $this->oImapClient->Fetch(array(
+			FetchType::UID,
+			FetchType::BODYSTRUCTURE
+		), (string) new SequenceSet($aReceiptUids), true);
+
+		foreach ($aFetchResponses as $oFetchResponse) {
+			$oBodyStructure = $oFetchResponse->GetFetchBodyStructure();
+			if (!$oBodyStructure) {
+				continue;
+			}
+			foreach ($aContentTypes as $sContentType) {
+				foreach ($oBodyStructure->SearchByContentType($sContentType) as $oPart) {
+					$sPartId = $oPart->PartID();
+					$sEncoding = $oPart->ContentTransferEncoding();
+					$sGroup = $sPartId . "\0" . $sEncoding;
+					$aPartGroups[$sGroup] ??= array(
+						'encoding' => $sEncoding,
+						'partId' => $sPartId,
+						'uids' => array()
+					);
+					$aPartGroups[$sGroup]['uids'][] = (int) $oFetchResponse->GetFetchValue(FetchType::UID);
+					continue 3;
+				}
+			}
+		}
+
+		$aHeaders = array();
+		foreach ($aPartGroups as $aPartGroup) {
+			$sPartId = $aPartGroup['partId'];
+			$aHeaderResponses = $this->oImapClient->Fetch(array(
+				FetchType::UID,
+				FetchType::BODY_PEEK . '[' . $sPartId . ']'
+			), (string) new SequenceSet($aPartGroup['uids']), true);
+			foreach ($aHeaderResponses as $oHeaderResponse) {
+				$sHeaders = $oHeaderResponse->GetFetchValue(FetchType::BODY . '[' . $sPartId . ']');
+				if (\is_string($sHeaders) && \strlen($sHeaders)) {
+					$sHeaders = \MailSo\Base\Utils::DecodeEncodingValue(
+						$sHeaders,
+						$aPartGroup['encoding']
+					);
+					$aHeaders[(int) $oHeaderResponse->GetFetchValue(FetchType::UID)] =
+						new \MailSo\Mime\HeaderCollection($sHeaders);
+				}
+			}
+		}
+		return $aHeaders;
+	}
+
+	private function DeliveryReceiptMessageIds(string $sFolderName, array $aReceiptUids) : array
+	{
+		$aMessageIds = array();
+		foreach ($this->ReceiptPartHeaders($sFolderName, $aReceiptUids, ['text/rfc822-headers'])
+			as $iReceiptUid => $oHeaders
+		) {
+			$sMessageId = \trim($oHeaders->ValueByName(MimeHeader::MESSAGE_ID));
+			\strlen($sMessageId) && ($aMessageIds[$iReceiptUid] = $sMessageId);
+		}
+		return $aMessageIds;
+	}
+
+	private function ReadReceiptMessageIds(string $sFolderName, array $aReceiptUids) : array
+	{
+		$aMessageIds = array();
+		foreach ($this->ReceiptPartHeaders($sFolderName, $aReceiptUids, [
+			'message/disposition-notification',
+			'message/global-disposition-notification'
+		]) as $iReceiptUid => $oHeaders) {
+			$sDisposition = $oHeaders->ValueByName('Disposition');
+			$sMessageId = \trim($oHeaders->ValueByName('Original-Message-ID'));
+			if (\preg_match('/;\s*displayed(?:\s*\/|$)/i', $sDisposition) && \strlen($sMessageId)) {
+				$aMessageIds[$iReceiptUid] = $sMessageId;
+			}
+		}
+		return $aMessageIds;
+	}
+
+	/**
+	 * Persist a receipt result on its exact Sent item while retaining the raw report.
+	 */
+	private function PrepareReceiptType(
+		string $sFolderName,
+		string $sSentFolderName,
+		string $sSearch,
+		string $sProcessedFlag,
+		string $sSuccessFlag,
+		callable $fMessageIds,
+		string $sLogLabel
+	) : void
+	{
+		$oInboxInfo = $this->oImapClient->FolderSelect($sFolderName);
+		$bCanProcess = \strlen($sSentFolderName)
+			&& $oInboxInfo->IsFlagSupported($sProcessedFlag);
+		$sPendingSearch = ($bCanProcess ? 'UNKEYWORD ' . $sProcessedFlag : 'UNSEEN') . ' ' . $sSearch;
+		$aPendingReceiptUids = $this->oImapClient->MessageSearch($sPendingSearch);
+		if (!$aPendingReceiptUids) {
+			return;
+		}
+
+		$aSuccessfulSentUids = array();
+		$bProcessed = false;
+		try {
+			if ($bCanProcess
+				&& $this->oImapClient->FolderSelect($sSentFolderName)->IsFlagSupported($sSuccessFlag)
+			) {
+				foreach ($fMessageIds($aPendingReceiptUids) as $sMessageId) {
+					$this->oImapClient->FolderExamine($sSentFolderName);
+					$aSentUids = $this->oImapClient->MessageSearch(
+						'HEADER Message-ID ' . \MailSo\Imap\SearchCriterias::escapeSearchString(
+							$this->oImapClient,
+							$sMessageId
+						)
+					);
+					if ($aSentUids) {
+						$aSuccessfulSentUids = \array_merge($aSuccessfulSentUids, $aSentUids);
+					}
+				}
+			}
+			$bProcessed = true;
+		} catch (\Throwable $oException) {
+			$this->logException($oException, \LOG_WARNING, $sLogLabel . ' receipt linking');
+			$aSuccessfulSentUids = array();
+		}
+
+		if ($aSuccessfulSentUids) {
+			$this->MessageSetFlag(
+				$sSentFolderName,
+				new SequenceSet(\array_values(\array_unique($aSuccessfulSentUids))),
+				$sSuccessFlag
+			);
+		}
+		if ($bProcessed && $bCanProcess) {
+			$this->MessageSetFlag(
+				$sFolderName,
+				new SequenceSet($aPendingReceiptUids),
+				$sProcessedFlag
+			);
+		}
+		$this->MessageSetFlag(
+			$sFolderName,
+			new SequenceSet($aPendingReceiptUids),
+			MessageFlag::SEEN
+		);
+	}
+
+	private function PrepareDeliveryReceipts(string $sFolderName, string $sSentFolderName) : void
+	{
+		$this->PrepareReceiptType(
+			$sFolderName,
+			$sSentFolderName,
+			self::SUCCESSFUL_DELIVERY_RECEIPT_SEARCH,
+			self::DELIVERY_RECEIPT_PROCESSED_FLAG,
+			self::DELIVERY_SUCCESS_FLAG,
+			fn(array $aUids) => $this->DeliveryReceiptMessageIds($sFolderName, $aUids),
+			'Delivery'
+		);
+	}
+
+	private function PrepareReadReceipts(string $sFolderName, string $sSentFolderName) : void
+	{
+		$this->PrepareReceiptType(
+			$sFolderName,
+			$sSentFolderName,
+			self::READ_RECEIPT_SEARCH,
+			self::READ_RECEIPT_PROCESSED_FLAG,
+			self::READ_SUCCESS_FLAG,
+			fn(array $aUids) => $this->ReadReceiptMessageIds($sFolderName, $aUids),
+			'Read'
+		);
+	}
+
 	public function MessageListUnseen(MessageListParams $oParams, FolderInformation $oInfo) : array
 	{
 		$oUnseenParams = new MessageListParams;
@@ -740,6 +949,120 @@ class MailClient
 //		$oUnseenParams->iPrevUidNext = $oParams->iPrevUidNext;
 //		$oUnseenParams->iThreadUid = $oParams->iThreadUid;
 		return $this->GetUids($oUnseenParams, $oInfo);
+	}
+
+	/**
+	 * Resolve every UID represented by the current message list view.
+	 *
+	 * In threaded mode the visible list contains one representative message per
+	 * thread, but selecting that row acts on the whole thread. Return the same
+	 * expanded UID set here so page and all-view selection share semantics.
+	 *
+	 * @throws \InvalidArgumentException
+	 * @throws \MailSo\RuntimeException
+	 * @throws \MailSo\Net\Exceptions\*
+	 * @throws \MailSo\Imap\Exceptions\*
+	 */
+	public function MessageListUids(MessageListParams $oParams) : array
+	{
+		$sSearch = \trim($oParams->sSearch);
+
+		$oMessageCollection = new MessageCollection;
+		$oMessageCollection->FolderName = $oParams->sFolderName;
+		$oMessageCollection->Search = $sSearch;
+		$oMessageCollection->ThreadUid = $oParams->iThreadUid;
+
+		$oInfo = $this->oImapClient->FolderStatusAndSelect($oParams->sFolderName);
+		$oMessageCollection->FolderInfo = $oInfo;
+		$oMessageCollection->totalEmails = $oInfo->MESSAGES;
+
+		if ($oParams->bUseThreads) {
+			$oParams->sThreadAlgorithm = $this->ResolveThreadAlgorithm($oParams->sThreadAlgorithm);
+			$oParams->bUseThreads = \strlen($oParams->sThreadAlgorithm) > 0;
+		}
+		if ($oParams->iThreadUid && !$oParams->bUseThreads) {
+			throw new \ValueError('THREAD not supported');
+		}
+
+		if (!$oInfo->MESSAGES) {
+			return array('count' => 0, 'uids' => array());
+		}
+
+		$oParams->bUseSort = ($oParams->bUseSort || $oParams->sSort) && $this->oImapClient->hasCapability('SORT');
+		$oParams->sSearch = $sSearch;
+
+		if (!$oParams->bUseThreads) {
+			$aUids = $this->GetUids($oParams, $oInfo);
+			return array(
+				'count' => \count($aUids),
+				'uids' => \array_values(\array_unique($aUids))
+			);
+		}
+
+		$aAllThreads = $this->ThreadsMap($oParams->sThreadAlgorithm, $oMessageCollection, $oParams->oCacher);
+
+		if ($oParams->iThreadUid) {
+			$aThreadUids = array($oParams->iThreadUid);
+			foreach ($aAllThreads as $aMap) {
+				if (\in_array($oParams->iThreadUid, $aMap)) {
+					$aThreadUids = $aMap;
+					break;
+				}
+			}
+			return array(
+				'count' => \count($aThreadUids),
+				'uids' => \array_values(\array_unique($aThreadUids))
+			);
+		}
+
+		$oAllParams = clone $oParams;
+		$oAllParams->sSearch = '';
+		$oAllParams->oSequenceSet = null;
+
+		$aUids = $this->GetUids($oAllParams, $oInfo);
+		$aRootUids = \array_values(\array_diff(
+			$aUids,
+			$this->ThreadsOldUids($oParams->sThreadAlgorithm, $aAllThreads, $oMessageCollection, $oParams->oCacher)
+		));
+
+		if (\strlen($sSearch)) {
+			$oSearchParams = clone $oParams;
+			$oSearchParams->bUseSort = false;
+			$aSearchedUids = $this->GetUids($oSearchParams, $oInfo);
+			$aSearchedUidSet = \array_flip($aSearchedUids);
+			$aMatchingThreadUids = array();
+
+			foreach ($aAllThreads as $aMap) {
+				foreach ($aMap as $iThreadUid) {
+					if (isset($aSearchedUidSet[$iThreadUid])) {
+						$aMatchingThreadUids = \array_merge($aMatchingThreadUids, $aMap);
+						break;
+					}
+				}
+			}
+			$aMatchingThreadUidSet = \array_flip($aMatchingThreadUids);
+
+			$aRootUids = \array_values(\array_filter($aRootUids, function($iUid) use ($aSearchedUidSet, $aMatchingThreadUidSet) {
+				return isset($aSearchedUidSet[$iUid]) || isset($aMatchingThreadUidSet[$iUid]);
+			}));
+		}
+
+		$aThreadsByUid = array();
+		foreach ($aAllThreads as $aMap) {
+			foreach ($aMap as $iThreadUid) {
+				$aThreadsByUid[$iThreadUid] = $aMap;
+			}
+		}
+
+		$aExpandedUids = array();
+		foreach ($aRootUids as $iUid) {
+			$aExpandedUids = \array_merge($aExpandedUids, $aThreadsByUid[$iUid] ?? array($iUid));
+		}
+
+		return array(
+			'count' => \count($aRootUids),
+			'uids' => \array_values(\array_unique($aExpandedUids))
+		);
 	}
 
 	/**
@@ -769,13 +1092,25 @@ class MailClient
 		$oMessageCollection->Search = $sSearch;
 		$oMessageCollection->ThreadUid = $oParams->iThreadUid;
 //		$oMessageCollection->Filtered = '' !== $this->oImapClient->Settings->search_filter;
+		if ($oParams->bHideDeliveryReceipts) {
+			$this->PrepareDeliveryReceipts(
+				$oParams->sFolderName,
+				$oParams->sDeliveryReceiptSentFolder
+			);
+			$this->PrepareReadReceipts(
+				$oParams->sFolderName,
+				$oParams->sDeliveryReceiptSentFolder
+			);
+		}
 
 		$oInfo = $this->oImapClient->FolderStatusAndSelect($oParams->sFolderName);
 		$oMessageCollection->FolderInfo = $oInfo;
 		$oMessageCollection->totalEmails = $oInfo->MESSAGES;
 
-		$oParams->bUseThreads = $oParams->bUseThreads && $this->oImapClient->CapabilityValue('THREAD');
-//			&& ($this->oImapClient->hasCapability('THREAD=REFS') || $this->oImapClient->hasCapability('THREAD=REFERENCES') || $this->oImapClient->hasCapability('THREAD=ORDEREDSUBJECT'));
+		if ($oParams->bUseThreads) {
+			$oParams->sThreadAlgorithm = $this->ResolveThreadAlgorithm($oParams->sThreadAlgorithm);
+			$oParams->bUseThreads = \strlen($oParams->sThreadAlgorithm) > 0;
+		}
 		if ($oParams->iThreadUid && !$oParams->bUseThreads) {
 			throw new \ValueError('THREAD not supported');
 		}
@@ -800,6 +1135,10 @@ class MailClient
 
 		$message_list_limit = $this->oImapClient->Settings->message_list_limit;
 		if (100 > $message_list_limit || $message_list_limit > $oInfo->MESSAGES) {
+			$message_list_limit = 0;
+		}
+		// The sequence-number shortcut cannot apply the receipt exclusion criteria.
+		if ($oParams->bHideDeliveryReceipts) {
 			$message_list_limit = 0;
 		}
 
@@ -873,7 +1212,9 @@ class MailClient
 //					$oParams->oSequenceSet = new SequenceSet($aUids);
 				} else {
 					// Remove all threaded UID's except the most recent of each thread
-					$aUids = \array_diff($aUids, $this->ThreadsOldUids($aAllThreads, $oMessageCollection, $oParams->oCacher));
+					$aUids = \array_diff($aUids, $this->ThreadsOldUids(
+						$oParams->sThreadAlgorithm, $aAllThreads, $oMessageCollection, $oParams->oCacher
+					));
 					// Get all unseen
 					$aUnseenUIDs = $this->MessageListUnseen($oParams, $oInfo);
 				}

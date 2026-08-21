@@ -5,6 +5,12 @@
 		<i data-bind="css: collapsedCss()"></i>
 		<!-- ko text: name --><!-- /ko -->
 	</a>
+	<button type="button" class="folder-tree-read" data-bind="visible: hasUnreadInSub() &amp;&amp; !canBeSelected(),
+		click: $root.markFolderTreeRead, clickBubble: false,
+		disable: $root.markingFolderTree,
+		css: {'is-loading': $root.markingFolderTree() === fullName},
+		attr: {'aria-label': $root.markSubfoldersReadLabel}"
+		data-i18n="[title]FOLDER_LIST/MARK_SUBFOLDERS_READ">✓</button>
 	<!-- ko if: hasVisibleSubfolders -->
 	<ul data-bind="template: { name: 'MailFolderListItem', foreach: visibleSubfolders }, css: { 'collapsed': collapsed() }"></ul>
 	<!-- /ko -->

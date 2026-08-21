@@ -78,9 +78,9 @@ export class SystemDropDownUserView extends AbstractViewRight {
 						});
 						AccountUserStore.loading(false);
 */
-						rl.route.reload();
+						location.reload();
 					}
-				}, {Email:email}
+				}, {Email:email}, 10000
 			);
 		}
 		return true;

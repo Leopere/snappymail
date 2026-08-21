@@ -14,6 +14,7 @@ interface PGPInterface
 	public function addSignKey(string $fingerprint, SensitiveString $passphrase) : bool;
 	public function clearDecryptKeys() : bool;
 	public function clearEncryptKeys() : bool;
+	public function clearPassphraseCache() : bool;
 	public function clearSignKeys() : bool;
 	public function decrypt(string $text) /*: string|false */;
 	public function decryptFile(string $filename) /*: string|false */;
@@ -24,6 +25,9 @@ interface PGPInterface
 	public function encrypt(string $plaintext) /*: string|false*/;
 	public function encryptFile(string $filename) /*: string|false*/;
 	public function encryptStream(/*resource*/ $fp, /*string|resource*/ $output = null) /*: string|false*/;
+	public function encryptSign(string $plaintext) /*: string|false*/;
+	public function encryptSignFile(string $filename) /*: string|false*/;
+	public function encryptSignStream(/*resource*/ $fp, /*string|resource*/ $output = null) /*: string|false*/;
 	public function export(string $fingerprint, ?SensitiveString $passphrase = null) /*: string|false*/;
 	public function getEngineInfo() : array;
 	public function getError() /*: string|false*/;

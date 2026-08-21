@@ -165,13 +165,13 @@ class SquireUI
 				},
 				block: {
 					ol: {
-						html: '#',
+						html: '1≡',
 						cmd: () => this.doList('OL'),
 						key: 'Shift + 8',
 						matches: 'OL'
 					},
 					ul: {
-						html: '⋮',
+						html: '•≡',
 						cmd: () => this.doList('UL'),
 						key: 'Shift + 9',
 						matches: 'UL'
@@ -308,6 +308,45 @@ class SquireUI
 		dispatchEvent(new CustomEvent('squire-toolbar', {detail:{squire:this,actions:actions}}));
 
 		toolbar.className = 'squire-toolbar btn-toolbar';
+		let toolbarSelection = null;
+		const rememberSelection = () => {
+			(doc.activeElement === squire.getRoot() || !toolbarSelection)
+				&& (toolbarSelection = squire.getSelection());
+		},
+		preserveSelection = event => {
+			rememberSelection();
+			'BUTTON' === event.currentTarget.tagName && event.preventDefault();
+		};
+		let moreGroup = createElement('div'),
+			moreButton = createElement('button'),
+			moreLabel = i18n('GLOBAL/MORE', 'More'),
+			doneLabel = i18n('GLOBAL/DONE', 'Done');
+		moreGroup.className = 'btn-group';
+		moreGroup.id = 'squire-toolgroup-more';
+		moreButton.type = 'button';
+		moreButton.className = 'btn';
+		moreButton.dataset.action = 'more';
+		moreButton.textContent = moreLabel + ' ▾';
+		moreButton.title = moreLabel;
+		moreButton.setAttribute('aria-label', moreLabel);
+		moreButton.setAttribute('aria-expanded', 'false');
+		moreButton.tabIndex = -1;
+		const setMoreExpanded = expanded => {
+			toolbar.classList.toggle('squire-toolbar-expanded', expanded);
+			moreButton.classList.toggle('active', expanded);
+			moreButton.textContent = (expanded ? doneLabel : moreLabel) + (expanded ? ' ▴' : ' ▾');
+			moreButton.title = expanded ? doneLabel : moreLabel;
+			moreButton.setAttribute('aria-label', expanded ? doneLabel : moreLabel);
+			moreButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+		};
+		moreButton.addEventListener('touchstart', rememberSelection, {passive: true});
+		moreButton.addEventListener('pointerdown', preserveSelection);
+		moreButton.addEventListener('click', () =>
+			setMoreExpanded(!toolbar.classList.contains('squire-toolbar-expanded'))
+		);
+		container.closest('dialog')?.addEventListener('close', () => setMoreExpanded(false));
+		moreGroup.append(moreButton);
+
 		let group, action/*, touchTap*/;
 		for (group in actions) {
 			let toolgroup = createElement('div');
@@ -362,20 +401,29 @@ class SquireUI
 					});
 */
 				}
-				input.addEventListener(ev, () => cfg.cmd(input));
+				input.addEventListener('touchstart', rememberSelection, {passive: true});
+				input.addEventListener('pointerdown', preserveSelection);
+				input.addEventListener(ev, () => {
+					toolbarSelection && squire.setSelection(toolbarSelection);
+					cfg.cmd(input);
+					toolbarSelection = null;
+				});
 				cfg.hint = i18n('EDITOR/' + action.toUpperCase());
 				if (cfg.hint) {
 					input.title = cfg.key ? cfg.hint + ' (' + ctrlKey + cfg.key + ')' : cfg.hint;
+					input.setAttribute('aria-label', cfg.hint);
 				} else if (cfg.key) {
 					input.title = ctrlKey + cfg.key;
 				}
 				input.dataset.action = action;
 				input.tabIndex = -1;
+				cfg.matches && input.setAttribute('aria-pressed', 'false');
 				cfg.input = input;
 				toolgroup.append(input);
 			}
 			toolgroup.children.length && toolbar.append(toolgroup);
 		}
+		toolbar.append(moreGroup);
 
 		this.modeSelect = actions.mode.plain.input;
 
@@ -503,10 +551,14 @@ class SquireUI
 			forEachObjectValue(actions, entries => {
 				forEachObjectValue(entries, cfg => {
 					// Check if selection has a matching parent or contains a matching element
-					cfg.matches && cfg.input.classList.toggle('active', !!(elm && (
-						(!collapsed && [...elm.querySelectorAll(cfg.matches)].some(node => range.intersectsNode(node)))
-						 || elm.closestWithin(cfg.matches, squireRoot)
-					)));
+					if (cfg.matches) {
+						const active = !!(elm && (
+							(!collapsed && [...elm.querySelectorAll(cfg.matches)].some(node => range.intersectsNode(node)))
+							 || elm.closestWithin(cfg.matches, squireRoot)
+						));
+						cfg.input.classList.toggle('active', active);
+						cfg.input.setAttribute('aria-pressed', active ? 'true' : 'false');
+					}
 				});
 			});
 
@@ -556,14 +608,67 @@ class SquireUI
 	}
 
 	doAction(name) {
-		this.squire[name]();
-		this.squire.focus();
+		let squire = this.squire,
+			root = squire.getRoot(),
+			tag = {
+				bold: 'b',
+				italic: 'i',
+				underline: 'u',
+				strikethrough: 's',
+				subscript: 'sub',
+				superscript: 'sup'
+			}[name],
+			blank = '<div><br></div>' === root.innerHTML;
+		if (blank) {
+			let range = doc.createRange();
+			range.setStart(root.firstElementChild, 0);
+			range.collapse(true);
+			squire.setRange(range);
+		}
+		squire[name]();
+		if (blank) {
+			let inline = root.querySelector(tag + ':empty');
+			if (inline) {
+				let placeholder = doc.createTextNode('\u200B'),
+					range = doc.createRange();
+				inline.append(placeholder);
+				range.setStart(placeholder, 0);
+				range.collapse(true);
+				squire.setRange(range);
+				const cleanup = event => {
+					let index = placeholder.data.indexOf('\u200B');
+					index >= 0 && placeholder.deleteData(index, 1);
+					'blur' === event.type && !inline.textContent && inline.remove();
+					root.removeEventListener('input', cleanup);
+					root.removeEventListener('blur', cleanup);
+				};
+				root.addEventListener('input', cleanup);
+				root.addEventListener('blur', cleanup);
+			}
+		}
+		squire.focus();
 	}
 
 	doList(type) {
-		let parent = this.squire.getSelectionClosest('UL,OL')?.nodeName,
+		let squire = this.squire,
+			root = squire.getRoot(),
+			parent = squire.getSelectionClosest('UL,OL')?.nodeName,
 			fn = {UL:'makeUnorderedList',OL:'makeOrderedList'};
-		(parent == type) ? this.squire.removeList() : this.squire[fn[type]]();
+		if ('<div><br></div>' === root.innerHTML) {
+			let range = doc.createRange();
+			range.selectNode(root.firstElementChild);
+			squire.setRange(range);
+			squire.insertHTML('<' + type + '><li><br></li></' + type + '>');
+			root.querySelector(':scope > div')?.remove();
+			range = doc.createRange();
+			range.setStart(root.querySelector('li'), 0);
+			range.collapse(true);
+			squire.setRange(range);
+			squire.focus();
+			return;
+		}
+		(parent == type) ? squire.removeList() : squire[fn[type]]();
+		squire.focus();
 	}
 /*
 	testPresenceinSelection(format, validation) {

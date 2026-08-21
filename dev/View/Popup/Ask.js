@@ -44,7 +44,7 @@ export class AskPopupView extends AbstractViewPopup {
 	 * @param {boolean=} focusOnShow = true
 	 * @returns {void}
 	 */
-	onShow(sAskDesc, fYesFunc = null, fNoFunc = null, focusOnShow = true, ask = 0, btnText = '') {
+	onShow(sAskDesc, fYesFunc = null, fNoFunc = null, focusOnShow = true, ask = 0, btnText = '', noBtnText = '') {
 		this.askDesc(sAskDesc || '');
 		this.askUsername(ask & 2);
 		this.askPass(ask & 1);
@@ -53,12 +53,12 @@ export class AskPopupView extends AbstractViewPopup {
 		this.passphrase('');
 		this.remember(true);
 		this.yesButton(i18n(btnText || 'GLOBAL/YES'));
-		this.noButton(i18n(ask ? 'GLOBAL/CANCEL' : 'GLOBAL/NO'));
+		this.noButton(i18n(noBtnText || (ask ? 'GLOBAL/CANCEL' : 'GLOBAL/NO')));
 		this.fYesAction = fYesFunc;
 		this.fNoAction = fNoFunc;
-		this.focusOnShow = focusOnShow
+		this.focusOnShow = true === focusOnShow
 			? (ask ? 'input[type="'+(ask&2?'text':'password')+'"]' : '.buttonYes')
-			: '';
+			: (focusOnShow || '');
 	}
 
 	afterShow() {

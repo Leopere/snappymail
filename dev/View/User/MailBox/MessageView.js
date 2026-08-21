@@ -27,6 +27,7 @@ import {
 import { arrayLength } from 'Common/Utils';
 import { download, downloadZip, mailToHelper, showMessageComposer, moveAction } from 'Common/UtilsUser';
 import { isFullscreen, exitFullscreen, toggleFullscreen } from 'Common/Fullscreen';
+import { getFolderFromCacheList } from 'Common/Cache';
 
 import { SMAudio } from 'Common/Audio';
 
@@ -54,13 +55,27 @@ import { MessageModel } from 'Model/Message';
 
 import { showScreenPopup } from 'Knoin/Knoin';
 import { OpenPgpImportPopupView } from 'View/Popup/OpenPgpImport';
-import { GnuPGUserStore } from 'Stores/User/GnuPG';
 import { OpenPGPUserStore } from 'Stores/User/OpenPGP';
+
+import {
+	CLASSIFIER_CATEGORY_OPTIONS,
+	classifyOpenedMessage,
+	setMessageCategory
+} from 'Classifier/EmailClassifier';
 
 const
 	oMessageScrollerDom = () => elementById('messageItem') || {},
 
 	currentMessage = MessageUserStore.message,
+
+	messageHasEncryptedArmor = message =>
+		!!(message && (
+			PgpUserStore.isEncrypted(message.plain?.())
+			|| PgpUserStore.isEncrypted(message.html?.())
+		)),
+
+	messageIsPgpDecrypted = message =>
+		!!(message?.pgpDecrypted?.() && !messageHasEncryptedArmor(message)),
 
 	setAction = action => {
 		const message = currentMessage();
@@ -149,6 +164,13 @@ export class MailMessageView extends AbstractViewRight {
 		this.message = currentMessage;
 		this.messageLoadingThrottle = MessageUserStore.loading;
 		this.messageError = MessageUserStore.error;
+		this.messageCategoryOptions = [{ value: '', label: 'Automatic' }, ...CLASSIFIER_CATEGORY_OPTIONS];
+		this.smartArchiveEnabled = SettingsUserStore.smartArchiveEnabled;
+		this.messageCategoryValue = ko.observable('');
+		this.messageCategorySubscription = null;
+		this.pgpDecryptionRequests = new WeakSet();
+		this.pgpDecryptionAttempts = new WeakMap();
+		this.pgpDecryptionFailureReports = new WeakSet();
 		this.pgpVerificationRequests = new WeakSet();
 
 		this.fullScreenMode = isFullscreen;
@@ -173,6 +195,8 @@ export class MailMessageView extends AbstractViewRight {
 
 			messageVisible: () => !MessageUserStore.loading() && !!currentMessage(),
 
+			messageCategoryWritable: () => !!getFolderFromCacheList(currentMessage()?.folder)?.tagsAllowed(),
+
 			tagsToHTML: () => currentMessage()?.flags().map(value =>
 					isAllowedKeyword(value)
 					? '<span class="focused msgflag-'+value+'">' + i18n('MESSAGE_TAGS/'+value,0,value) + '</span>'
@@ -183,6 +207,19 @@ export class MailMessageView extends AbstractViewRight {
 				&& !(MessagelistUserStore.isDraftFolder() || MessagelistUserStore.isSentFolder())
 				&& !currentMessage()?.flags().includes('$mdnsent')
 				&& !currentMessage()?.flags().includes('\\answered'),
+
+			messageCategoryAutomaticLabel: () => {
+				const category = currentMessage()?.classifiedCategory?.(),
+					label = CLASSIFIER_CATEGORY_OPTIONS.find(item => item.value === category)?.label;
+				return label ? label + ' · Automatic' : 'Automatic';
+			},
+
+			messageCategoryCurrentLabel: () => {
+				const category = this.messageCategoryValue();
+				return category
+					? CLASSIFIER_CATEGORY_OPTIONS.find(item => item.value === category)?.label || 'Category'
+					: this.messageCategoryAutomaticLabel();
+			},
 
 			listAttachments: () => currentMessage()?.attachments()
 				.filter(item => SettingsUserStore.listInlineAttachments() || !item.isLinked()),
@@ -197,14 +234,16 @@ export class MailMessageView extends AbstractViewRight {
 			dkimIcon: () => {
 				switch (this.dkimData()[0]) {
 					case 'none':
-						return '🚫︎';
+						return '○';
 					case 'pass':
 						return '✔';
 					default:
 						return '✖';
 				}
 			},
-			dkimIconClass: () => 'pass' === this.dkimData()[0] ? 'iconcolor-green' : 'iconcolor-red',
+			dkimIconClass: () => 'pass' === this.dkimData()[0]
+				? 'iconcolor-green'
+				: 'none' === this.dkimData()[0] ? 'message-authentication-neutral' : 'iconcolor-red',
 			dkimTitle:() => {
 				const dkim = this.dkimData();
 				return dkim[0] ? dkim[2] || 'DKIM: ' + dkim[0] : '';
@@ -213,14 +252,16 @@ export class MailMessageView extends AbstractViewRight {
 			spfIcon: () => {
 				switch (this.spfData()[0]) {
 					case 'none':
-						return '🚫︎';
+						return '○';
 					case 'pass':
 						return '✔';
 					default:
 						return '✖';
 				}
 			},
-			spfIconClass: () => 'pass' === this.spfData()[0] ? 'iconcolor-green' : 'iconcolor-red',
+			spfIconClass: () => 'pass' === this.spfData()[0]
+				? 'iconcolor-green'
+				: 'none' === this.spfData()[0] ? 'message-authentication-neutral' : 'iconcolor-red',
 			spfTitle:() => {
 				const spf = this.spfData();
 				return spf[0] ? spf[2] || 'SPF: ' + spf[0] : '';
@@ -229,14 +270,16 @@ export class MailMessageView extends AbstractViewRight {
 			dmarcIcon: () => {
 				switch (this.dmarcData()[0]) {
 					case 'none':
-						return '🚫︎';
+						return '○';
 					case 'pass':
 						return '✔';
 					default:
 						return '✖';
 				}
 			},
-			dmarcIconClass: () => 'pass' === this.dmarcData()[0] ? 'iconcolor-green' : 'iconcolor-red',
+			dmarcIconClass: () => 'pass' === this.dmarcData()[0]
+				? 'iconcolor-green'
+				: 'none' === this.dmarcData()[0] ? 'message-authentication-neutral' : 'iconcolor-red',
 			dmarcTitle:() => {
 				const dmarc = this.dmarcData();
 				return dmarc[0] ? dmarc[2] || 'DMARC: ' + dmarc[0] : '';
@@ -254,12 +297,32 @@ export class MailMessageView extends AbstractViewRight {
 				if (!encrypted) {
 					return '';
 				}
-				if (message.pgpDecrypted()) {
-					return 'Encrypted message decrypted automatically';
+				if (messageIsPgpDecrypted(message)) {
+					return 'Encrypted message decrypted';
 				}
-				return encrypted.error
+				if (encrypted.error) {
+					return encrypted.error;
+				}
+				const vaultState = OpenPGPUserStore.vaultState();
+				if (!message.pgpDecrypted() && ('locked' === vaultState || 'error' === vaultState)) {
+					return OpenPGPUserStore.vaultError() || 'Preparing browser encryption vault';
+				}
+				return message.pgpDecrypted()
 					? 'Encrypted message could not be decrypted automatically'
 					: 'Encrypted message';
+			},
+
+			pgpEncryptionStatusSuccess: () => {
+				const message = currentMessage();
+				return !!(message?.pgpEncrypted?.() && messageIsPgpDecrypted(message));
+			},
+
+			pgpEncryptionStatusError: () => {
+				const
+					message = currentMessage(),
+					encrypted = message?.pgpEncrypted?.();
+				return !!(encrypted && (encrypted.error
+					|| (message.pgpDecrypted() && messageHasEncryptedArmor(message))));
 			},
 
 			pgpSignatureStatusText: () => {
@@ -267,13 +330,15 @@ export class MailMessageView extends AbstractViewRight {
 				if (!signed) {
 					return '';
 				}
-				if (true === signed.success) {
+				if (true === signed.checked && true === signed.success) {
 					return 'Signature verified automatically';
 				}
-				if (false === signed.success) {
+				if (true === signed.checked && false === signed.success) {
 					return 'Signature could not be verified';
 				}
-				return 'Verifying signature automatically';
+				return signed.checking
+					? 'Checking signature automatically'
+					: 'Signature detected; waiting to verify';
 			},
 
 			canBeUndeleted: () => currentMessage()?.isDeleted(),
@@ -284,7 +349,13 @@ export class MailMessageView extends AbstractViewRight {
 
 		addSubscribablesTo(this, {
 			message: message => {
+				this.messageCategorySubscription?.dispose();
+				this.messageCategorySubscription = null;
+				this.messageCategoryValue(message?.manualCategory?.() || '');
 				if (message) {
+					this.messageCategorySubscription = message.manualCategory.subscribe(
+						category => this.messageCategoryValue(category)
+					);
 					if (this.viewHash !== message.hash) {
 						this.scrollMessageToTop();
 					}
@@ -295,6 +366,7 @@ export class MailMessageView extends AbstractViewRight {
 					this.spfData(message.spf[0] || ['none', '', '']);
 					this.dmarcData(message.dmarc[0] || ['none', '', '']);
 					this.nowTracking(false);
+					classifyOpenedMessage(message);
 					this.autoSecureMessage(message);
 				} else {
 					MessagelistUserStore.selectedMessage(null);
@@ -305,10 +377,18 @@ export class MailMessageView extends AbstractViewRight {
 				}
 			},
 
-			messageLoadingThrottle: value => !value && this.autoSecureMessage(),
+			messageLoadingThrottle: value => {
+				if (!value) {
+					classifyOpenedMessage(currentMessage());
+					this.autoSecureMessage();
+				}
+			},
 
 			showFullInfo: value => Local.set(ClientSideKeyNameMessageHeaderFullInfo, value ? '1' : '0')
 		});
+
+		OpenPGPUserStore.privateKeys.subscribe(() => this.autoSecureMessage());
+		OpenPGPUserStore.publicKeys.subscribe(() => this.autoVerifyMessage());
 
 		// commands
 		this.replyCommand = createCommandReplyHelper(ComposeType.Reply);
@@ -340,28 +420,114 @@ export class MailMessageView extends AbstractViewRight {
 		this.showFullInfo(!this.showFullInfo());
 	}
 
-	autoSecureMessage(message = currentMessage()) {
-		if (!message) {
+	autoSecureMessage(message = currentMessage(), force = false) {
+		// List metadata identifies encrypted messages before their full MIME body arrives.
+		// Never decrypt that provisional state: the pending Message response contains the
+		// original armor and would otherwise race the decrypted browser result.
+		if (!message || !message.body || MessageUserStore.loading()) {
 			return;
 		}
 
-		if (GnuPGUserStore.hasRememberedDecryptionKey(message)) {
-			message.decrypt().then(() => {
-				currentMessage() === message && this.autoVerifyMessage(message);
-			});
-		} else {
+		const
+			isArmored = messageHasEncryptedArmor(message),
+			isEncrypted = message.pgpEncrypted?.() || isArmored;
+
+			if (isEncrypted && !message.pgpDecrypted?.()) {
+				if (this.pgpDecryptionRequests.has(message)) {
+					return;
+				}
+				const encrypted = message.pgpEncrypted?.(),
+					attempts = this.pgpDecryptionAttempts.get(message) || 0;
+				if (force) {
+					this.pgpDecryptionAttempts.delete(message);
+					if (encrypted) {
+						delete encrypted.error;
+						delete encrypted.retryable;
+						message.pgpEncrypted?.(encrypted);
+					}
+				} else if (encrypted?.error && (!encrypted.retryable || 2 <= attempts)) {
+					this.reportPgpDecryptFailure(message, 'decrypt-error');
+					return;
+				}
+
+				this.pgpDecryptionRequests.add(message);
+				let attempted = false;
+				// The mailbox can render before the browser vault is initialized.
+				PgpUserStore.ready().then(ready => {
+					if (!ready) {
+						return false;
+					}
+					attempted = true;
+					this.pgpDecryptionAttempts.set(message, (this.pgpDecryptionAttempts.get(message) || 0) + 1);
+					return message.decrypt();
+				}).then(decrypted => {
+					if (decrypted) {
+						classifyOpenedMessage(message);
+						currentMessage() === message && this.autoVerifyMessage(message);
+						return;
+					}
+					const encrypted = message.pgpEncrypted?.(),
+						attempts = this.pgpDecryptionAttempts.get(message) || 0;
+					if (encrypted?.retryable && attempts < 2) {
+						setTimeout(() => this.autoSecureMessage(message), 250);
+					}
+				}).finally(() => {
+					this.pgpDecryptionRequests.delete(message);
+					const encrypted = message.pgpEncrypted?.(),
+						attempts = this.pgpDecryptionAttempts.get(message) || 0;
+					attempted && (!encrypted?.retryable || 2 <= attempts)
+						&& this.reportPgpDecryptFailure(message, 'decrypt-finished-with-pgp-body');
+				});
+				return;
+			}
+
 			this.autoVerifyMessage(message);
-		}
+			if (message.pgpDecrypted?.() && isArmored) {
+				const encrypted = message.pgpEncrypted?.() || { partId: '', keyIds: [] };
+				message.pgpDecrypted?.(false);
+				encrypted.error = encrypted.error || 'Decryption returned encrypted data';
+				message.pgpEncrypted?.(encrypted);
+				this.reportPgpDecryptFailure(message, 'decrypted-flag-with-pgp-body');
+			}
 	}
 
 	autoVerifyMessage(message = currentMessage()) {
 		const signed = message?.pgpSigned?.();
-		if (!signed || true === signed.success || false === signed.success || this.pgpVerificationRequests.has(message)) {
+		if (!signed
+		 || (true === signed.checked && (true === signed.success || false === signed.success))
+		 || this.pgpVerificationRequests.has(message)) {
 			return;
 		}
 
 		this.pgpVerificationRequests.add(message);
 		message.pgpVerify(true).finally(() => this.pgpVerificationRequests.delete(message));
+	}
+
+	reportPgpDecryptFailure(message, reason) {
+		if (!message || this.pgpDecryptionFailureReports.has(message)) {
+			return;
+		}
+
+		const
+			encrypted = message.pgpEncrypted?.(),
+			armoredBody = messageHasEncryptedArmor(message),
+			decrypted = !!message.pgpDecrypted?.();
+
+		if ((!encrypted && !armoredBody) || (decrypted && !armoredBody)) {
+			return;
+		}
+
+		this.pgpDecryptionFailureReports.add(message);
+		Remote.request('PgpDecryptFailureReport', null, {
+			folder: message.folder,
+			uid: message.uid,
+			hash: message.hash,
+			reason,
+			armoredBody: armoredBody ? 1 : 0,
+			pgpEncrypted: encrypted ? 1 : 0,
+			pgpDecrypted: decrypted ? 1 : 0,
+			error: 'string' === typeof encrypted?.error ? encrypted.error.slice(0, 240) : ''
+		}, 8000);
 	}
 
 	closeMessage() {
@@ -464,8 +630,7 @@ export class MailMessageView extends AbstractViewRight {
 			if (el) {
 				const attachment = ko.dataFor(el), url = attachment?.linkDownload();
 				if (url) {
-					if ('application/pgp-keys' == attachment.mimeType
-					 && (OpenPGPUserStore.isSupported() || GnuPGUserStore.isSupported())) {
+					if ('application/pgp-keys' == attachment.mimeType && OpenPGPUserStore.isSupported()) {
 						fetchRaw(url).then(text =>
 							showScreenPopup(OpenPgpImportPopupView, [text])
 						);
@@ -678,6 +843,7 @@ export class MailMessageView extends AbstractViewRight {
 				{
 					messageFolder: oMessage.folder,
 					messageUid: oMessage.uid,
+					messageId: oMessage.messageId,
 					readReceipt: oMessage.readReceipt,
 					subject: i18n('READ_RECEIPT/SUBJECT', { SUBJECT: oMessage.subject() }),
 					plain: i18n('READ_RECEIPT/BODY', { 'READ-RECEIPT': AccountUserStore.email() })
@@ -698,7 +864,7 @@ export class MailMessageView extends AbstractViewRight {
 	}
 
 	pgpDecrypt() {
-		currentMessage().decrypt();
+		this.autoSecureMessage(currentMessage(), true);
 	}
 
 	pgpVerify(/*self, event*/) {
@@ -706,7 +872,30 @@ export class MailMessageView extends AbstractViewRight {
 	}
 
 	async smimeDecrypt() {
-		currentMessage().decrypt();
+		const message = currentMessage();
+		if (message) {
+			await message.decrypt();
+			classifyOpenedMessage(message);
+		}
+	}
+
+	keepCategoryMenuOpen(self, event) {
+		event.stopPropagation();
+		return true;
+	}
+
+	changeMessageCategory(option, event) {
+		const message = currentMessage(),
+			category = option?.value || '';
+		event.stopPropagation();
+		if (message) {
+			this.messageCategoryValue(category);
+			setMessageCategory(message, category).then(saved => {
+				if (!saved && currentMessage() === message) {
+					this.messageCategoryValue(message.manualCategory());
+				}
+			});
+		}
 	}
 
 	smimeVerify(/*self, event*/) {

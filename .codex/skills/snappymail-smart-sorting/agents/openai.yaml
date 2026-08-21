@@ -1,0 +1,4 @@
+interface:
+  display_name: "SnappyMail Smart Sorting"
+  short_description: "Design and verify safe server-side mail sorting"
+  default_prompt: "Use $snappymail-smart-sorting to audit this mailbox and create conservative, reversible server-side sorting rules."

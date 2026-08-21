@@ -8,28 +8,35 @@
 		<a class="btn buttonContacts fontastic" data-bind="visible: allowContacts, click: contactsClick" data-i18n="[title]GLOBAL/CONTACTS">📇</a>
 	</div>
 	<div class="b-content">
-		<ul class="b-folders-system" data-bind="foreach: systemFolders">
+		<ul class="b-folders-system b-folders-inbox" data-bind="foreach: inboxFolders">
 			<li>
 				<a data-bind="dropmessages: $data,
-					css: { 'selected': selected, 'selectable': selectable, 'anim-action-class': actionBlink, 'is-flagged': isFlagged },
+					css: { 'selected': selected() && !isFlagged(), 'selectable': selectable, 'anim-action-class': actionBlink },
 					attr: { 'data-icon': icon, 'data-unread': unreadCount }">
 					<!-- ko text: localName --><!-- /ko -->
-					<!-- ko if: isInbox -->
-					<span class="flag-icon fontastic"></span>
-					<!-- /ko -->
+				</a>
+				<!-- ko if: isInbox -->
+				<a class="selectable pinnedShortcut" data-icon="📌" data-bind="css: {'selected': isFlagged}"
+					data-i18n="FOLDER_LIST/PINNED_NAME"></a>
+				<!-- /ko -->
+			</li>
+		</ul>
+		<hr data-bind="visible: mailFolders().length">
+		<ul class="b-folders-system b-folders-mail" data-bind="foreach: mailFolders">
+			<li>
+				<a data-bind="dropmessages: $data,
+					css: { 'selected': selected(), 'selectable': selectable, 'anim-action-class': actionBlink },
+					attr: { 'data-icon': icon, 'data-unread': unreadCount }">
+					<!-- ko text: localName --><!-- /ko -->
 				</a>
 			</li>
 		</ul>
-		<hr>
+		<hr data-bind="visible: folderListVisible().length">
 		<div class="search-input-wrp" data-bind="visible: foldersFilterVisible">
 			<input type="search" id="folderSearchInput" data-bind="textInput: foldersFilter" data-i18n="[placeholder]GLOBAL/SEARCH">
 			<a data-bind="click: clearFolderSearch, visible: foldersFilter">✕</a>
 		</div>
-		<div class="e-checkbox" tabindex="0" data-bind="toggle: filterUnseen">
-			<i role="checkbox" class="fontastic" data-bind="text: filterUnseen() ? '☑' : '☐'"></i>
-			<span data-i18n="SEARCH/UNSEEN"></span>
-		</div>
-		<ul class="b-folders-user" data-bind="css: {unreadOnly: filterUnseen}, template: { name: 'MailFolderListItem', foreach: folderListVisible }"></ul>
+		<ul class="b-folders-user" data-bind="template: { name: 'MailFolderListItem', foreach: folderListVisible }"></ul>
 		<div class="move-action-content-wrapper" data-bind="visible: moveAction"></div>
 	</div>
 	<div class="b-footer btn-toolbar">

@@ -1,5 +1,4 @@
 import { addObservablesTo } from 'External/ko';
-import { GnuPGUserStore } from 'Stores/User/GnuPG';
 import { PgpUserStore } from 'Stores/User/Pgp';
 
 import { AbstractViewPopup } from 'Knoin/AbstractViews';
@@ -16,13 +15,8 @@ export class OpenPgpImportPopupView extends AbstractViewPopup {
 
 			key: '',
 			keyError: false,
-			keyErrorMessage: '',
-
-			saveGnuPG: true,
-			saveServer: true
+			keyErrorMessage: ''
 		});
-
-		this.canGnuPG = GnuPGUserStore.isSupported();
 
 		this.key.subscribe(() => {
 			this.keyError(false);
@@ -68,7 +62,7 @@ export class OpenPgpImportPopupView extends AbstractViewPopup {
 		});
 	}
 
-	submitForm() {
+	async submitForm() {
 		let keyTrimmed = this.key().trim();
 
 		if (/\n/.test(keyTrimmed)) {
@@ -82,16 +76,19 @@ export class OpenPgpImportPopupView extends AbstractViewPopup {
 			let match = null,
 				count = 30,
 				done = false;
-			const GnuPG = this.saveGnuPG() && GnuPGUserStore.isSupported(),
-				backup = this.saveServer(),
-				// eslint-disable-next-line max-len
+			const // eslint-disable-next-line max-len
 				reg = /[-]{3,6}BEGIN[\s]PGP[\s](PRIVATE|PUBLIC)[\s]KEY[\s]BLOCK[-]{3,6}[\s\S]+?[-]{3,6}END[\s]PGP[\s](PRIVATE|PUBLIC)[\s]KEY[\s]BLOCK[-]{3,6}/gi;
 
 			do {
 				match = reg.exec(keyTrimmed);
 				if (match && 0 < count) {
 					if (match[0] && match[1] && match[2] && match[1] === match[2]) {
-						PgpUserStore.importKey(this.key(), GnuPG, backup);
+						if ('PRIVATE' === match[1]) {
+							this.keyError(true);
+							this.keyErrorMessage('Private keys must be migrated into the encrypted browser vault.');
+							return;
+						}
+						await PgpUserStore.importKey(match[0]);
 					}
 					--count;
 					done = false;

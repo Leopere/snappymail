@@ -129,6 +129,7 @@ class PdoAddressBook
 			return false;
 		}
 
+		$oClient = null;
 		try {
 			$oClient = $this->getDavClient();
 		} catch (\Throwable $e) {

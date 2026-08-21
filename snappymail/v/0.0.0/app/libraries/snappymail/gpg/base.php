@@ -76,18 +76,42 @@ abstract class Base
 	function __destruct()
 	{
 		$this->proc_close();
-		$gpgconf = static::findBinary('gpgconf');
-		if ($gpgconf) {
-			$cmd = $gpgconf . ' --kill gpg-agent';
-			// https://github.com/the-djmaze/snappymail/issues/1560#issuecomment-2144817883
-//			if (\version_compare($this->version, '2.4.0', '<')) {
-				$cmd .= ' ' . \escapeshellarg($this->options['homedir']);
-//			}
-			$env = ['GNUPGHOME' => $this->options['homedir']];
-			$pipes = [];
-			if ($process = \proc_open($cmd, [], $pipes, null, $env)) {
-				\proc_close($process);
+	}
+
+	/**
+	 * Forget the gpg-agent cache for this mailbox. This is deliberately an
+	 * explicit session-end action, never an object-destructor side effect.
+	 */
+	public function clearPassphraseCache() : bool
+	{
+		$lock = $this->acquireOperationLock();
+		try {
+			$gpgconf = static::findBinary('gpgconf');
+			if (!$gpgconf) {
+				return false;
 			}
+
+			$pipes = [];
+			$process = \proc_open(
+				$gpgconf . ' --homedir ' . \escapeshellarg($this->options['homedir']) . ' --kill gpg-agent',
+				[
+					0 => ['pipe', 'r'],
+					1 => ['pipe', 'w'],
+					2 => ['pipe', 'w']
+				],
+				$pipes,
+				null,
+				['GNUPGHOME' => $this->options['homedir']]
+			);
+			if (!\is_resource($process)) {
+				return false;
+			}
+			foreach ($pipes as $pipe) {
+				\is_resource($pipe) && \fclose($pipe);
+			}
+			return 0 === \proc_close($process);
+		} finally {
+			$this->releaseOperationLock($lock);
 		}
 	}
 
@@ -174,6 +198,11 @@ abstract class Base
 	 * Encrypts and signs a given text
 	 */
 	public function encryptSignFile(string $filename) /*: string|false*/
+	{
+		return false;
+	}
+
+	public function encryptSignStream(/*resource*/ $fp, /*string|resource*/ $output = null) /*: string|false*/
 	{
 		return false;
 	}
@@ -483,6 +512,35 @@ abstract class Base
 		}
 
 		return $exitCode;
+	}
+
+	/** @return resource */
+	protected function acquireOperationLock()
+	{
+		$lock = @\fopen($this->options['homedir'] . '/.snappymail-gpg.lock', 'c');
+		if (!$lock) {
+			throw new \RuntimeException('Unable to lock GnuPG keyring.');
+		}
+
+		$deadline = \microtime(true) + 6;
+		do {
+			if (\flock($lock, \LOCK_EX | \LOCK_NB)) {
+				return $lock;
+			}
+			\usleep(25000);
+		} while (\microtime(true) < $deadline);
+
+		\fclose($lock);
+		throw new \RuntimeException('GnuPG keyring is busy.');
+	}
+
+	/** @param resource $lock */
+	protected function releaseOperationLock($lock) : void
+	{
+		if (\is_resource($lock)) {
+			\flock($lock, \LOCK_UN);
+			\fclose($lock);
+		}
 	}
 
 	protected static function findBinary($name) : ?string

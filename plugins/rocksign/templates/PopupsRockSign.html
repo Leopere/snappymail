@@ -1,0 +1,115 @@
+<header>
+	<button type="button" class="close" aria-label="Close Contracts dialog"
+		data-bind="click: tryToClose, disable: mutationBusy">×</button>
+	<h3 data-bind="text: title"></h3>
+</header>
+<div class="modal-body form-horizontal rocksign-popup">
+	<div class="alert alert-error" role="alert" aria-live="assertive" data-bind="visible: error, text: error"></div>
+	<div class="alert alert-info" role="status" aria-live="polite" data-bind="visible: notice, text: notice"></div>
+	<p class="rocksign-mailbox" data-bind="visible: mailbox, text: 'RockSign mailbox and reply-to: ' + mailbox()"></p>
+
+	<!-- ko if: 'request' === mode() -->
+	<div class="control-group">
+		<label for="rocksign-template">Template</label>
+		<div class="controls">
+			<select id="rocksign-template"
+				data-bind="options: templates, optionsText: 'name', optionsValue: 'id', value: selectedTemplateId"></select>
+		</div>
+	</div>
+	<div class="rocksign-role-list" data-bind="foreach: roles">
+		<div class="control-group">
+			<label data-bind="text: role, attr: {for: 'rocksign-role-email-' + $index()}"></label>
+			<div class="controls rocksign-role-fields">
+				<input type="email" autocomplete="email" placeholder="Signer email"
+					data-bind="textInput: email, attr: {id: 'rocksign-role-email-' + $index(), 'aria-label': role + ' email'}">
+				<input type="text" autocomplete="name" placeholder="Signer name"
+					data-bind="textInput: name, attr: {'aria-label': role + ' name'}">
+			</div>
+		</div>
+	</div>
+	<div class="control-group">
+		<label for="rocksign-delivery">Delivery</label>
+		<div class="controls">
+			<select id="rocksign-delivery" data-bind="value: delivery">
+				<option value="rocksign">RockSign sends and tracks the invitation</option>
+				<option value="snappymail">Insert one signer link into this email</option>
+			</select>
+			<div class="help-block" data-bind="visible: 'snappymail' === delivery()">
+				Available only for a one-role template. This email's To/Cc/Bcc recipients will be replaced by that signer.
+			</div>
+			<label class="checkbox" data-bind="visible: 'snappymail' === delivery()">
+				<input type="checkbox" data-bind="checked: confirmLocalDelivery">
+				I reviewed this draft's body and attachments. Replace all recipients and insert the one private signing link.
+			</label>
+		</div>
+	</div>
+	<!-- ko if: 'rocksign' === delivery() -->
+	<div class="control-group">
+		<label for="rocksign-subject">Custom subject</label>
+		<div class="controls"><input id="rocksign-subject" type="text" data-bind="textInput: messageSubject"></div>
+	</div>
+	<div class="control-group">
+		<label for="rocksign-body">Custom body</label>
+		<div class="controls">
+			<textarea id="rocksign-body" rows="5" placeholder="Include {{submitter.link}} when customizing the message."
+				data-bind="textInput: messageBody"></textarea>
+		</div>
+	</div>
+	<!-- /ko -->
+	<!-- /ko -->
+
+	<!-- ko if: 'certify' === mode() || 'verify' === mode() -->
+	<div class="control-group">
+		<label for="rocksign-attachment">PDF attachment</label>
+		<div class="controls">
+			<select id="rocksign-attachment"
+				data-bind="options: pdfAttachments, optionsText: 'name', optionsValue: 'tempName', value: selectedTempName"></select>
+			<div class="help-block" data-bind="visible: !pdfAttachments().length">Attach a completed PDF first.</div>
+		</div>
+	</div>
+	<!-- /ko -->
+	<!-- ko if: 'certify' === mode() -->
+	<div class="control-group">
+		<label for="rocksign-reason">Certification reason</label>
+		<div class="controls"><input id="rocksign-reason" type="text" data-bind="textInput: reason"></div>
+	</div>
+	<p class="rocksign-trust-note">Certification proves that the exact PDF bytes passed through this RockSign instance. It does not record a human contract signature.</p>
+	<!-- /ko -->
+
+	<!-- ko if: 'completed' === mode() -->
+	<div class="control-group">
+		<label for="rocksign-submission">Completed submission</label>
+		<div class="controls">
+			<select id="rocksign-submission"
+				data-bind="options: submissions, optionsText: 'label', optionsValue: 'id', value: selectedSubmissionId"></select>
+		</div>
+	</div>
+	<div class="control-group">
+		<label for="rocksign-file">PDF file</label>
+		<div class="controls">
+			<select id="rocksign-file"
+				data-bind="options: files, optionsText: 'name', optionsValue: 'key', value: selectedFileKey, disable: loadingFiles"></select>
+			<div class="help-block" role="status" data-bind="visible: loadingFiles">Loading PDF files…</div>
+		</div>
+	</div>
+	<!-- /ko -->
+
+	<!-- ko if: verification -->
+	<div class="rocksign-verification" data-bind="css: {verified: verification().signed_by_instance}">
+		<strong data-bind="text: verification().signed_by_instance ? 'Verified by sign.boompay.ca' : 'Not verified by this RockSign instance'"></strong>
+		<div data-bind="visible: verification().document_source, text: 'Source: ' + (verification().document_source || '')"></div>
+		<div data-bind="visible: verification().embedded_assertion_status, text: 'Embedded assertion: ' + (verification().embedded_assertion_status || '')"></div>
+		<div data-bind="visible: verification().chain_status, text: 'Audit chain: ' + (verification().chain_status || '')"></div>
+	</div>
+	<!-- /ko -->
+</div>
+<footer>
+	<button type="button" class="btn buttonClose" data-bind="click: tryToClose, disable: mutationBusy" data-icon="✖">Close</button>
+	<button type="button" class="btn" data-bind="click: undoInvitation, visible: canUndoInvitation">
+		Undo draft changes
+	</button>
+	<button type="button" class="btn" data-bind="click: execute, visible: !finished(), disable: busy() || loadingFiles()">
+		<i aria-hidden="true" data-bind="css: {'icon-spinner': busy}"></i>
+		<span data-bind="text: 'request' === mode() ? 'Create request' : ('certify' === mode() ? 'Certify PDF' : ('completed' === mode() ? 'Attach PDF' : 'Verify PDF'))"></span>
+	</button>
+</footer>
