@@ -36,7 +36,8 @@ for (const required of [
 }
 assert(!deploy.includes('${HOME'), 'The deploy-it snapshot clears HOME; deployment must resolve the OS account home directory.');
 assert(deploy.includes('pwd.getpwuid(os.getuid()).pw_dir'));
-assert(deploy.includes('DOCKER_CLI_PLUGIN_EXTRA_DIRS'));
+assert(deploy.includes('docker_config/cli-plugins/docker-buildx'));
+assert(deploy.includes('DOCKER_CONFIG="$docker_config" docker buildx version'));
 assert(deploy.indexOf('docker buildx imagetools inspect') < deploy.indexOf('./scripts/set-snappymail-release.py'));
 assert(deploy.indexOf('./scripts/set-snappymail-release.py') < deploy.indexOf('./scripts/verify.sh'));
 assert(deploy.indexOf('./scripts/verify.sh') < deploy.lastIndexOf('"$ship_it_bin"'));
