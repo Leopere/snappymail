@@ -39,4 +39,33 @@ assert.match(
 	'A failed remember-me storage write must degrade to a normal session login.'
 );
 
+const loginProcess = userAuth.match(/public function LoginProcess\([\s\S]*?\n\t}/)?.[0] || '';
+assert(loginProcess, 'UserAuth::LoginProcess method must be present.');
+assert.match(
+	loginProcess,
+	/StorageType::SESSION/,
+	'Login must persist session data under StorageType::SESSION.'
+);
+assert.match(
+	loginProcess,
+	/if\s*\(!\s*\$this->StorageProvider\(\)->Put\([\s\S]*?StorageType::SESSION[\s\S]*?\)\s*\)/,
+	'LoginProcess must check boolean StorageProvider()->Put result for session writes.'
+);
+const authTokenWrite = loginProcess.indexOf('SetAuthToken(');
+const sessionWrite = loginProcess.indexOf('StorageType::SESSION');
+assert(authTokenWrite > 0, 'LoginProcess should set auth token when session is persisted.');
+assert(authTokenWrite > sessionWrite, 'Auth token cookie write must happen after session persistence succeeds.');
+assert.match(
+	loginProcess,
+	/if\s*\(!\$this->StorageProvider\(\)->Put\([\s\S]*?StorageType::SESSION[\s\S]*?\)\)\s*{[\s\S]*?Cookies::clear\(Utils::SESSION_TOKEN\);[\s\S]*?Cookies::clear\(self::AUTH_SPEC_TOKEN_KEY\);[\s\S]*?Cookies::clear\(self::AUTH_ADDITIONAL_TOKEN_KEY\);[\s\S]*?throw new ClientException\(/,
+	'LoginProcess must clear all session/auth cookies and abort when mandatory persistence fails.'
+);
+
+const restoreSession = userAuth.match(/public function getMainAccountFromToken\([\s\S]*?\n\t}/)?.[0] || '';
+assert.match(
+	restoreSession,
+	/if\s*\(!\$this->StorageProvider\(\)->Put\([\s\S]*?StorageType::SESSION[\s\S]*?\)\)\s*{[\s\S]*?Cookies::clear\(Utils::SESSION_TOKEN\);[\s\S]*?Cookies::clear\(self::AUTH_SPEC_TOKEN_KEY\);[\s\S]*?Cookies::clear\(self::AUTH_ADDITIONAL_TOKEN_KEY\);[\s\S]*?throw new ClientException\(/,
+	'Remember-me restoration must not issue auth cookies unless its mandatory session write succeeds.'
+);
+
 console.log('Remember-me storage regression tests passed');

@@ -171,7 +171,17 @@ trait UserAuth
 
 		$this->imapConnect($oAccount, true, null, $iTimeout);
 		if ($bMainAccount) {
-			$this->StorageProvider()->Put($oAccount, StorageType::SESSION, Utils::GetSessionToken(), 'true');
+			$sSessionToken = Utils::GetSessionToken();
+			if (!$this->StorageProvider()->Put($oAccount, StorageType::SESSION, $sSessionToken, 'true')) {
+				Cookies::clear(Utils::SESSION_TOKEN);
+				Cookies::clear(self::AUTH_SPEC_TOKEN_KEY);
+				Cookies::clear(self::AUTH_ADDITIONAL_TOKEN_KEY);
+				throw new ClientException(
+					Notifications::ConnectionError,
+					null,
+					'Session storage unavailable'
+				);
+			}
 
 			// Must be here due to bug #1241
 			$this->SetMainAuthAccount($oAccount);
@@ -299,12 +309,21 @@ trait UserAuth
 			} else {
 				$oAccount = $this->GetAccountFromSignMeToken();
 				if ($oAccount) {
-					$this->StorageProvider()->Put(
+					if (!$this->StorageProvider()->Put(
 						$oAccount,
 						StorageType::SESSION,
 						Utils::GetSessionToken(),
 						'true'
-					);
+					)) {
+						Cookies::clear(Utils::SESSION_TOKEN);
+						Cookies::clear(self::AUTH_SPEC_TOKEN_KEY);
+						Cookies::clear(self::AUTH_ADDITIONAL_TOKEN_KEY);
+						throw new ClientException(
+							Notifications::ConnectionError,
+							null,
+							'Session storage unavailable'
+						);
+					}
 					$this->SetAuthToken($oAccount);
 				}
 			}
