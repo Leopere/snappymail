@@ -26,6 +26,9 @@ for (const required of [
 	'--metadata-file "$metadata"',
 	'containerimage.digest',
 	'docker buildx imagetools inspect',
+	'docker run --rm --platform linux/amd64',
+	'www-data:www-data:550',
+	'test -r /snappymail/index.php',
 	'./scripts/set-snappymail-release.py',
 	'./scripts/verify.sh',
 	'BOOMPAY_APPLICATION_RELEASE=snappymail',
@@ -39,8 +42,11 @@ assert(deploy.includes('pwd.getpwuid(os.getuid()).pw_dir'));
 assert(deploy.includes('docker_config/cli-plugins/docker-buildx'));
 assert(deploy.includes('DOCKER_CONFIG="$docker_config" docker buildx version'));
 assert(deploy.indexOf('docker buildx imagetools inspect') < deploy.indexOf('./scripts/set-snappymail-release.py'));
+assert(deploy.indexOf('docker run --rm --platform linux/amd64') < deploy.indexOf('./scripts/set-snappymail-release.py'));
 assert(deploy.indexOf('./scripts/set-snappymail-release.py') < deploy.indexOf('./scripts/verify.sh'));
 assert(deploy.indexOf('./scripts/verify.sh') < deploy.lastIndexOf('"$ship_it_bin"'));
 assert(dockerfile.includes('ARG SOURCE_REVISION'));
 assert(dockerfile.includes('LABEL org.opencontainers.image.revision="$SOURCE_REVISION"'));
+assert(dockerfile.includes('chown www-data:www-data /snappymail'));
+assert(dockerfile.includes('chmod 550 /snappymail'));
 console.log('Direct production deployment contract checks passed');

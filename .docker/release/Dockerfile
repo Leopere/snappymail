@@ -171,7 +171,10 @@ RUN set -eux; \
 # The 'www-data' user/group in alpine is 82:82. The 'nginx' user/group in alpine is 101:101, and is part of www-data group
 COPY --chown=www-data:www-data --from=builder /snappymail /snappymail
 # Use a custom snappymail data folder
-RUN mv -v /snappymail/data /var/lib/snappymail;
+RUN set -eux; \
+    chown www-data:www-data /snappymail; \
+    chmod 550 /snappymail; \
+    mv -v /snappymail/data /var/lib/snappymail;
 # Setup configs
 COPY --chown=root:root .docker/release/files /
 # Ship the private integration as a managed local plugin. The entrypoint copies
