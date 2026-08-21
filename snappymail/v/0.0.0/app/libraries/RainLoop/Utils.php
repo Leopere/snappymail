@@ -163,7 +163,9 @@ class Utils
 			throw new \RuntimeException('Failed to save file "'.$filename.'"');
 		}
 		\clearstatcache();
-		\chmod($filename, 0600);
+		if (!\chmod($filename, 0600)) {
+			throw new \RuntimeException('Failed to secure file "'.$filename.'"');
+		}
 /*
 		try {
 		} catch (\Throwable $oException) {

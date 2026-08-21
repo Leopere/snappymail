@@ -27,7 +27,7 @@ class FileStorage implements \RainLoop\Providers\Storage\IStorage
 			$sFileName = $this->generateFileName($mAccount, $iStorageType, $sKey, true);
 			$sFileName && \RainLoop\Utils::saveFile($sFileName, $sValue);
 			return !empty($sFileName);
-		} catch (\Throwable $e) {
+		} catch (\RuntimeException $e) {
 			\SnappyMail\Log::warning('FileStorage', $e->getMessage());
 		}
 		return false;

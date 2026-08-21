@@ -14,6 +14,19 @@ assert.match(
 	/try\s*{[\s\S]*generateFileName\([^;]+true\)/,
 	'FileStorage must catch directory-creation failures during writes.'
 );
+assert.match(
+	putMethod,
+	/catch \(\\RuntimeException \$e\)/,
+	'FileStorage must not suppress programmer errors or invalid storage types.'
+);
+
+const utils = read('snappymail/v/0.0.0/app/libraries/RainLoop/Utils.php');
+const saveFile = utils.match(/public static function saveFile\([\s\S]*?\n\t}/)?.[0] || '';
+assert.match(
+	saveFile,
+	/if \(!\\chmod\(\$filename, 0600\)\)[\s\S]*throw new \\RuntimeException/,
+	'Remember-me token files must fail closed when mode 0600 cannot be applied.'
+);
 
 const signMeMethod = userAuth.match(/public function SetSignMeToken\([\s\S]*?\n\t}/)?.[0] || '';
 const storageWrite = signMeMethod.indexOf('StorageProvider()->Put(');
