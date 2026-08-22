@@ -143,7 +143,10 @@ trait UserAuth
 	{
 		$aCredentials = $this->resolveLoginCredentials($sEmail, $oPassword);
 
-		if (!\str_contains($aCredentials['email'], '@') || !\strlen($oPassword)) {
+		if (!\strlen(\MailSo\Base\Utils::getEmailAddressLocalPart($aCredentials['email']))
+		 || !\strlen(\MailSo\Base\Utils::getEmailAddressDomain($aCredentials['email']))
+		 || !\strlen($oPassword)
+		) {
 			throw new ClientException(Notifications::InvalidInputArgument);
 		}
 

@@ -16,6 +16,9 @@ abstract class IDN
 	{
 		$local = \explode('@', $value);
 		$domain = static::domain(\array_pop($local), true);
+		if ('' === $domain) {
+			return '';
+		}
 		$local[] = $domain;
 		return \implode('@', $local);
 	}
@@ -44,7 +47,17 @@ abstract class IDN
 	{
 //		if ($toAscii && \preg_match('/[^\x20-\x7E]/', $domain)) {
 //		if (!$toAscii && \preg_match('/(^|\\.)xn--/i', $domain)) {
-		return $toAscii ? \strtolower(\idn_to_ascii($domain)) : \idn_to_utf8($domain);
+		$validAscii = false !== \filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME);
+		if ($validAscii && ($toAscii || !\preg_match('/(^|\\.)xn--/i', $domain))) {
+			return $toAscii ? \strtolower($domain) : $domain;
+		}
+
+		$converted = $toAscii ? \idn_to_ascii($domain) : \idn_to_utf8($domain);
+		if (!\is_string($converted) || '' === $converted) {
+			return '';
+		}
+
+		return $toAscii ? \strtolower($converted) : $converted;
 /*
 		$domain = \explode('.', $domain);
 		foreach ($domain as $k => $v) {
@@ -63,6 +76,9 @@ abstract class IDN
 		}
 		$local = \explode('@', $address);
 		$domain = static::domain(\array_pop($local), $toAscii);
+		if ('' === $domain) {
+			return '';
+		}
 		return \implode('@', $local) . '@' . $domain;
 	}
 
