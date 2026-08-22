@@ -24,8 +24,7 @@ class Domain implements \JsonSerializable
 
 	function __construct(string $sName)
 	{
-//		$this->Name = \SnappyMail\IDN::toAscii($sName);
-		$this->Name = \strtolower(\idn_to_ascii($sName));
+		$this->Name = \SnappyMail\IDN::toAscii($sName);
 		$this->IMAP = new \MailSo\Imap\Settings;
 		$this->SMTP = new \MailSo\Smtp\Settings;
 		$this->Sieve = new \MailSo\Sieve\Settings;
@@ -100,8 +99,7 @@ class Domain implements \JsonSerializable
 
 	public function SetAliasName(string $sAliasName) : void
 	{
-//		$this->aliasName = \SnappyMail\IDN::toAscii($sAliasName);
-		$this->aliasName = \strtolower(\idn_to_ascii($sAliasName));
+		$this->aliasName = \SnappyMail\IDN::toAscii($sAliasName);
 	}
 
 	public function ValidateWhiteList(string $sEmail) : bool

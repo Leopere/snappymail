@@ -175,6 +175,16 @@ RUN set -eux; \
     mv -v /snappymail/data /var/lib/snappymail;
 # Setup configs
 COPY --chown=root:root .docker/release/files /
+# The production build runs with a restrictive client umask. BuildKit can
+# preserve that mode on parent directories introduced by COPY, which prevents
+# the www-data FPM workers from traversing /usr or loading TLS libraries.
+RUN chmod 755 \
+    /etc \
+    /etc/nginx \
+    /usr \
+    /usr/local \
+    /usr/local/etc \
+    /usr/local/etc/php-fpm.d
 # Ship the private integration as a managed local plugin. The entrypoint copies
 # it into the persistent SnappyMail plugin directory without exposing secrets.
 COPY --chown=root:root plugins/rocksign /opt/snappymail-plugins/rocksign

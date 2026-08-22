@@ -12,6 +12,8 @@ require $sourceRoot . '/v/0.0.0/app/libraries/snappymail/idn.php';
 $forcedIcuFailure = '1' === \getenv('SNAPPYMAIL_EXPECT_ICU_FAILURE');
 $cases = [
 	[static fn(string $value): string => \SnappyMail\IDN::toAscii($value), 'BOOMPAY.CA', 'boompay.ca', 'ASCII domain normalization'],
+	[static fn(string $value): string => \SnappyMail\IDN::toAscii($value), '*', '*', 'global wildcard normalization'],
+	[static fn(string $value): string => \SnappyMail\IDN::toAscii($value), '*.BOOMPAY.CA', '*.boompay.ca', 'ASCII wildcard normalization'],
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'Security@BOOMPAY.CA', 'Security@boompay.ca', 'ASCII mailbox normalization'],
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'security', 'security', 'domainless login compatibility'],
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'security@', '', 'empty-domain rejection'],
@@ -58,6 +60,66 @@ if ($forcedIcuFailure) {
 		fwrite(STDERR, 'Unicode mailbox restoration failed: ' . \var_export($utf8, true) . "\n");
 		exit(1);
 	}
+}
+
+$libraries = $sourceRoot . '/v/0.0.0/app/libraries/';
+\spl_autoload_register(static function(string $className) use ($libraries): void {
+	$file = $libraries . \strtr($className, '\\', DIRECTORY_SEPARATOR) . '.php';
+	if (\is_file($file)) {
+		require_once $file;
+	}
+});
+final class SnappyMailIdnTestApi
+{
+	public static function Config(): object
+	{
+		static $config = null;
+		return $config ??= new class {
+			public function Get(string $section, string $name, mixed $default = null): mixed
+			{
+				return $default;
+			}
+		};
+	}
+}
+\class_alias(SnappyMailIdnTestApi::class, 'RainLoop\\Api');
+$domainRoot = \sys_get_temp_dir() . '/snappymail-idn-domain-' . \bin2hex(\random_bytes(8));
+if (!\mkdir($domainRoot, 0700)) {
+	fwrite(STDERR, "Could not create the domain fixture\n");
+	exit(1);
+}
+try {
+	$domainConfig = [
+		'IMAP' => ['host' => 'imap.example.test', 'port' => 993, 'type' => 1],
+		'SMTP' => ['host' => 'smtp.example.test', 'port' => 465, 'type' => 1],
+		'Sieve' => ['enabled' => false, 'host' => '', 'port' => 4190, 'type' => 0],
+		'whiteList' => ''
+	];
+	$domainJson = \json_encode($domainConfig, JSON_THROW_ON_ERROR);
+	\file_put_contents($domainRoot . '/boompay.ca.json', $domainJson);
+	\file_put_contents($domainRoot . '/default.json', $domainJson);
+	\file_put_contents($domainRoot . '/_wildcard_.example.test.json', $domainJson);
+	$provider = new \RainLoop\Providers\Domain\DefaultDomain($domainRoot);
+	$domain = $provider->Load('BOOMPAY.CA');
+	if (!$domain || 'boompay.ca' !== $domain->Name()) {
+		fwrite(STDERR, "An ASCII domain configuration must load without ICU\n");
+		exit(1);
+	}
+	$defaultDomain = $provider->Load('*');
+	if (!$defaultDomain || '*' !== $defaultDomain->Name()) {
+		fwrite(STDERR, "The global wildcard configuration must load without ICU\n");
+		exit(1);
+	}
+	$wildcardDomain = $provider->Load('mail.example.test', true);
+	if (!$wildcardDomain || '*.example.test' !== $wildcardDomain->Name()) {
+		fwrite(STDERR, "An ASCII subdomain wildcard configuration must load without ICU\n");
+		exit(1);
+	}
+} finally {
+	@\unlink($domainRoot . '/boompay.ca.json');
+	@\unlink($domainRoot . '/default.json');
+	@\unlink($domainRoot . '/_wildcard_.example.test.json');
+	@\rmdir($domainRoot);
 }
 
 echo "IDN login normalization tests passed\n";

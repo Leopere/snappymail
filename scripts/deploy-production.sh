@@ -87,6 +87,7 @@ DOCKER_CONFIG="$docker_config" docker run --rm --platform linux/amd64 \
   --entrypoint /bin/sh "$image" -ceu '
     test "$(stat -c "%U:%G:%a" /snappymail)" = "www-data:www-data:550"
     su nginx -s /bin/sh -c "test -r /snappymail/index.php"
+    su www-data -s /bin/sh -c "php -r '\''exit(PHP_VERSION_ID >= 80200 ? 0 : 1);'\''"
   ' || fail 'the immutable image failed the nginx application-readability smoke test'
 
 (

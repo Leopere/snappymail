@@ -12,6 +12,11 @@ const userAuth = fs.readFileSync(path.join(
 	root,
 	'snappymail/v/0.0.0/app/libraries/RainLoop/Actions/UserAuth.php'
 ), 'utf8');
+const domainProvider = fs.readFileSync(path.join(
+	root,
+	'snappymail/v/0.0.0/app/libraries/RainLoop/Providers/Domain/DefaultDomain.php'
+), 'utf8');
+const setup = fs.readFileSync(path.join(root, 'snappymail/v/0.0.0/setup.php'), 'utf8');
 const php = process.env.PHP_BINARY || 'php';
 const run = (command, args, options = {}) => childProcess.spawnSync(command, args, {
 	cwd: root,
@@ -44,6 +49,8 @@ assert.match(
 	/getEmailAddressLocalPart\(\$aCredentials\['email'\]\)[\s\S]*getEmailAddressDomain\(\$aCredentials\['email'\]\)/,
 	'Login must reject an empty local part or domain before domain lookup.'
 );
+assert(!domainProvider.includes('idn_to_ascii'), 'Domain configuration lookup must use the fail-closed IDN wrapper.');
+assert(!setup.includes('idn_to_ascii'), 'Initial domain configuration must use the fail-closed IDN wrapper.');
 
 let result = runPhp();
 process.stdout.write(result.stdout || '');

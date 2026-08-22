@@ -140,8 +140,11 @@ const openMessage = async (page, folder, subject) => {
 	for (let attempt = 0; attempt < 12; ++attempt) {
 		const row = page.locator('.messageListItem').filter({ hasText: subject }).first();
 		if (await row.isVisible().catch(() => false)) {
-			await row.click({ force: true });
-			await page.locator('#V-MailMessageView').waitFor({ state: 'visible', timeout: 30000 });
+			await row.locator('.subjectParent').click({ timeout: 30000 });
+			await page.waitForFunction(expectedSubject => {
+				const view = ko.dataFor(document.querySelector('#V-MailMessageView'));
+				return view?.message?.()?.subject?.() === expectedSubject && !view?.messageLoadingThrottle?.();
+			}, subject, { timeout: 60000 });
 			return;
 		}
 		await page.waitForTimeout(5000);
@@ -159,7 +162,7 @@ const verifyOpenMessage = async (page, body, folder) => {
 			signature = message?.pgpSigned?.();
 		return !!message?.pgpDecrypted?.() && element.innerText.includes(expected)
 			&& true === signature?.checked && true === signature?.success;
-	}, body, { timeout: 90000 });
+	}, body, { timeout: 90000 }).catch(() => {});
 	const state = await page.locator('#V-MailMessageView').evaluate((element, expected) => {
 		const message = ko.dataFor(element)?.message?.(),
 			signature = message?.pgpSigned?.();
@@ -172,9 +175,9 @@ const verifyOpenMessage = async (page, body, folder) => {
 		};
 	}, body);
 	assert(state.decrypted && state.bodyVisible && !state.armorVisible,
-		`${folder} must show decrypted plaintext without OpenPGP armor.`);
+		`${folder} must show decrypted plaintext without OpenPGP armor: ${JSON.stringify(state)}`);
 	assert(state.signatureChecked && state.signatureSuccess,
-		`${folder} must show a successfully verified signature.`);
+		`${folder} must show a successfully verified signature: ${JSON.stringify(state)}`);
 	return state;
 };
 
@@ -224,6 +227,7 @@ const verifyOpenMessage = async (page, body, folder) => {
 						format: 'utf8'
 					});
 				await Promise.all((local.signatures || []).map(signature => signature.verified));
+				const decryptedMime = String(local.data || '');
 				const selfHeader = params.autocrypt.find(header => header.addr.toLowerCase() === values.email),
 					selfPublic = selfHeader && await openpgp.readKey({
 						armoredKey: '-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n'
@@ -239,7 +243,8 @@ const verifyOpenMessage = async (page, body, folder) => {
 				await wkd.getEncryptionKey();
 				return {
 					encrypted: /^-----BEGIN PGP MESSAGE-----/.test(params.encrypted),
-					signed: 0 < (local.signatures || []).length,
+					signed: /Content-Type:\s*multipart\/signed;/i.test(decryptedMime)
+						&& /Content-Type:\s*application\/pgp-signature;/i.test(decryptedMime),
 					encryptEnabled: true === view.doEncrypt(),
 					signEnabled: true === view.doSign(),
 					plaintextNotice: view.plaintextNotice(),
@@ -249,6 +254,7 @@ const verifyOpenMessage = async (page, body, folder) => {
 				};
 			}, { email: account.email, subject, body, wkdBinary }
 		));
+		report.preparation = preparation;
 		assert(preparation.encrypted && preparation.signed && preparation.encryptEnabled && preparation.signEnabled,
 			'The compose path must sign and encrypt the complete self-message.');
 		assert.strictEqual(preparation.plaintextNotice, '', 'Encrypted compose must not show a plaintext fallback.');

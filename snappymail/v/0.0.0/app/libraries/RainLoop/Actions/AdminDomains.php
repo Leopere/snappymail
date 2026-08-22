@@ -80,8 +80,10 @@ trait AdminDomains
 	public function DoAdminDomainAutoconfig() : array
 	{
 		$this->IsAdminLoggined();
-//		$sDomain = \SnappyMail\IDN::toAscii($this->GetActionParam('domain'));
-		$sDomain = \strtolower(\idn_to_ascii($this->GetActionParam('domain')));
+		$sDomain = \SnappyMail\IDN::toAscii($this->GetActionParam('domain'));
+		if (!$sDomain) {
+			return $this->DefaultResponse(array('email' => '', 'config' => null));
+		}
 		$sEmail = "test@{$sDomain}";
 		return $this->DefaultResponse(array(
 			'email' => $sEmail,

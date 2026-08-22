@@ -29,6 +29,7 @@ for (const required of [
 	'docker run --rm --platform linux/amd64',
 	'www-data:www-data:550',
 	'test -r /snappymail/index.php',
+	'su www-data -s /bin/sh -c "php -r',
 	'./scripts/set-snappymail-release.py',
 	'./scripts/verify.sh',
 	'BOOMPAY_APPLICATION_RELEASE=snappymail',
@@ -49,6 +50,13 @@ assert(dockerfile.includes('ARG SOURCE_REVISION'));
 assert(dockerfile.includes('LABEL org.opencontainers.image.revision="$SOURCE_REVISION"'));
 assert(dockerfile.includes('chown www-data:www-data /snappymail'));
 assert(dockerfile.includes('chmod 550 /snappymail'));
+for (const traversable of ['/etc', '/etc/nginx', '/usr', '/usr/local', '/usr/local/etc', '/usr/local/etc/php-fpm.d']) {
+	assert.match(
+		dockerfile,
+		new RegExp(`chmod 755[\\s\\S]*${traversable.replaceAll('/', '\\/')}`),
+		`The release image must keep ${traversable} traversable by FPM workers.`
+	);
+}
 assert(
 	dockerfile.indexOf('chown www-data:www-data /snappymail') >
 		dockerfile.indexOf('COPY --chown=root:root .docker/release/files /'),

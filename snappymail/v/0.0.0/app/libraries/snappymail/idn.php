@@ -47,9 +47,17 @@ abstract class IDN
 	{
 //		if ($toAscii && \preg_match('/[^\x20-\x7E]/', $domain)) {
 //		if (!$toAscii && \preg_match('/(^|\\.)xn--/i', $domain)) {
+		if ($toAscii && '*' === $domain) {
+			return '*';
+		}
+		$wildcard = '';
+		if ($toAscii && \str_starts_with($domain, '*.')) {
+			$wildcard = '*.';
+			$domain = \substr($domain, 2);
+		}
 		$validAscii = false !== \filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME);
 		if ($validAscii && ($toAscii || !\preg_match('/(^|\\.)xn--/i', $domain))) {
-			return $toAscii ? \strtolower($domain) : $domain;
+			return $wildcard . ($toAscii ? \strtolower($domain) : $domain);
 		}
 
 		$converted = $toAscii ? \idn_to_ascii($domain) : \idn_to_utf8($domain);
@@ -57,7 +65,7 @@ abstract class IDN
 			return '';
 		}
 
-		return $toAscii ? \strtolower($converted) : $converted;
+		return $wildcard . ($toAscii ? \strtolower($converted) : $converted);
 /*
 		$domain = \explode('.', $domain);
 		foreach ($domain as $k => $v) {

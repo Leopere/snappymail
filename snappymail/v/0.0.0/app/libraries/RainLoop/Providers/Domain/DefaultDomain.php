@@ -29,8 +29,7 @@ class DefaultDomain implements DomainInterface
 
 	private static function encodeFileName(string $sName) : string
 	{
-//		return ('*' === $sName) ? 'default' : \str_replace('*', '_wildcard_', \SnappyMail\IDN::toAscii($sName));
-		return ('*' === $sName) ? 'default' : \str_replace('*', '_wildcard_', \strtolower(\idn_to_ascii($sName)));
+		return ('*' === $sName) ? 'default' : \str_replace('*', '_wildcard_', \SnappyMail\IDN::toAscii($sName));
 	}
 
 	private function getWildcardDomainsLine() : string
@@ -80,8 +79,10 @@ class DefaultDomain implements DomainInterface
 
 	public function Load(string $sName, bool $bFindWithWildCard = false, bool $bCheckDisabled = true, bool $bCheckAliases = true) : ?\RainLoop\Model\Domain
 	{
-//		$sName = \SnappyMail\IDN::toAscii($sName);
-		$sName = \strtolower(\idn_to_ascii($sName));
+		$sName = \SnappyMail\IDN::toAscii($sName);
+		if (!$sName) {
+			return null;
+		}
 		if ($bCheckDisabled && \in_array($sName, $this->getDisabled())) {
 			return null;
 		}
@@ -135,9 +136,8 @@ class DefaultDomain implements DomainInterface
 
 	public function SaveAlias(string $sName, string $sTarget) : bool
 	{
-//		$sTarget = \SnappyMail\IDN::toAscii($sTarget);
 //		$sTarget = static::encodeFileName($sTarget);
-		$sTarget = \strtolower(\idn_to_ascii($sTarget));
+		$sTarget = \SnappyMail\IDN::toAscii($sTarget);
 		$sRealFileName = static::encodeFileName($sName);
 		if (!$sRealFileName || !$sTarget/* || !\is_readable("{$this->sDomainPath}/{$sTarget}.json")*/) {
 			return false;
@@ -158,8 +158,10 @@ class DefaultDomain implements DomainInterface
 		// RainLoop use comma, we use newline
 		$sItem = \strtok($sFile, ",\n");
 		while (false !== $sItem) {
-//			$aDisabled[] = \SnappyMail\IDN::toAscii($sItem);
-			$aDisabled[] = \strtolower(\idn_to_ascii($sItem));
+			$sItem = \SnappyMail\IDN::toAscii(\trim($sItem));
+			if ($sItem) {
+				$aDisabled[] = $sItem;
+			}
 			$sItem = \strtok(",\n");
 		}
 		return $aDisabled;
@@ -168,8 +170,7 @@ class DefaultDomain implements DomainInterface
 
 	public function Disable(string $sName, bool $bDisable) : bool
 	{
-//		$sName = \SnappyMail\IDN::toAscii($sName);
-		$sName = \strtolower(\idn_to_ascii($sName));
+		$sName = \SnappyMail\IDN::toAscii($sName);
 		if ($sName) {
 			$aResult = $this->getDisabled();
 			if ($bDisable) {
