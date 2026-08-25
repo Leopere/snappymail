@@ -34,6 +34,10 @@ It validates the current local build against both public webmail bundles, fresh
 WKD lookup, encryption recipient packets, blocked missing-key sends, browser
 decryption, and normal forwarding. See [docs/openpgp-verification.md](docs/openpgp-verification.md).
 
+Spam training is an end-to-end webmail and mail-server contract. See
+[docs/spamassassin-training.md](docs/spamassassin-training.md) for the required
+SnappyMail signals, Mail-in-a-Box integration, and live acceptance test.
+
 ---
 
 <div align="center">
