@@ -3,6 +3,10 @@ import { CLASSIFIER_CATEGORY_OPTIONS } from 'Classifier/Rules';
 export const
 	CATEGORY_FLAG_PREFIX = '$smcat-',
 	AUTOMATIC_CATEGORY_FLAG = '$smcat-auto',
+	RETENTION_FLAGS = Object.freeze({
+		'auth-code-1d': '$smret-auth-code',
+		'security-alert-30d': '$smret-security-alert'
+	}),
 	SMART_CATEGORY_VALUES = Object.freeze([
 		'calendar',
 		'contract',
@@ -24,7 +28,8 @@ export const
 				notification: '🔔'
 			}[option.value]
 		}))),
-	categoryKeyword = category => CATEGORY_FLAG_PREFIX + category;
+	categoryKeyword = category => CATEGORY_FLAG_PREFIX + category,
+	retentionKeyword = policy => RETENTION_FLAGS[policy] || '';
 
 export function parseCategoryFolderRoutes(value) {
 	const routes = {};

@@ -14,9 +14,11 @@ import {
 import {
 	AUTOMATIC_CATEGORY_FLAG,
 	CATEGORY_FLAG_PREFIX,
+	RETENTION_FLAGS,
 	SMART_CATEGORY_VALUES,
 	categoryKeyword,
-	parseCategoryFolderRoutes
+	parseCategoryFolderRoutes,
+	retentionKeyword
 } from 'Classifier/Categories';
 
 const
@@ -318,13 +320,14 @@ const
 		})
 	),
 
-	writeMessageCategory = async (message, category, automatic = false) => {
+	writeMessageCategory = async (message, category, automatic = false, retentionPolicy = '') => {
 		if (!getFolderFromCacheList(message.folder)?.tagsAllowed()) {
 			return false;
 		}
 		const before = message.flags().slice(),
 			beforeLower = before.map(flag => flag.toLowerCase()),
 			automaticFlag = before.find(flag => flag.toLowerCase() === AUTOMATIC_CATEGORY_FLAG),
+			retentionFlags = before.filter(flag => Object.values(RETENTION_FLAGS).includes(flag.toLowerCase())),
 			categoryFlags = before.filter(flag => {
 				const value = flag.toLowerCase();
 				return value.startsWith(CATEGORY_FLAG_PREFIX)
@@ -332,16 +335,20 @@ const
 			}),
 			nextFlag = category ? categoryKeyword(category) : '',
 			hadAutomatic = !!automaticFlag,
-			nextAutomatic = !!nextFlag && automatic;
+			nextAutomatic = !!nextFlag && automatic,
+			nextRetentionFlag = nextAutomatic ? retentionKeyword(retentionPolicy) : '';
 
 		if (1 === categoryFlags.length && categoryFlags[0].toLowerCase() === nextFlag
 		 && hadAutomatic === nextAutomatic
-		 || !categoryFlags.length && !nextFlag && !hadAutomatic) {
+		 && retentionFlags.length === (nextRetentionFlag ? 1 : 0)
+		 && (!nextRetentionFlag || retentionFlags[0].toLowerCase() === nextRetentionFlag)
+		 || !categoryFlags.length && !nextFlag && !hadAutomatic && !retentionFlags.length) {
 			return true;
 		}
 
-		const oldManagedFlags = categoryFlags.concat(automaticFlag ? [automaticFlag] : []),
-			nextManagedFlags = (nextFlag ? [nextFlag] : []).concat(nextAutomatic ? [AUTOMATIC_CATEGORY_FLAG] : []),
+		const oldManagedFlags = categoryFlags.concat(automaticFlag ? [automaticFlag] : [], retentionFlags),
+			nextManagedFlags = (nextFlag ? [nextFlag] : [])
+				.concat(nextAutomatic ? [AUTOMATIC_CATEGORY_FLAG] : [], nextRetentionFlag ? [nextRetentionFlag] : []),
 			addedFlags = nextManagedFlags.filter(flag => !beforeLower.includes(flag)),
 			removedFlags = oldManagedFlags.filter(flag => !nextManagedFlags.includes(flag.toLowerCase()));
 		message.flags(before.filter(flag => !oldManagedFlags.includes(flag)).concat(nextManagedFlags));
@@ -412,7 +419,7 @@ const
 				if (message.manualCategory?.()) {
 					return false;
 				}
-				return writeMessageCategory(message, result.category, true);
+				return writeMessageCategory(message, result.category, true, result.retentionPolicy);
 			});
 		categoryWrites.set(message, current);
 		return current;

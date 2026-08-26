@@ -54,6 +54,7 @@ isAllowedKeyword = value => {
 	value = value.toLowerCase();
 	return '\\' != value[0]
 		&& !value.startsWith('$smcat-')
+		&& !value.startsWith('$smret-')
 		&& !ignoredKeywords.includes(value);
 },
 

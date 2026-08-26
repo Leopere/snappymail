@@ -130,8 +130,25 @@ expectClassification({
 }, 'finance', true);
 expectClassification({ subject: 'Payment received and confirmed' }, 'finance');
 
-expectClassification({ subject: 'Security alert: new sign-in' }, 'security');
-expectClassification({ subject: 'Unusual login detected — please review' }, 'security', true);
+actual = expectClassification({ subject: 'Your authentication code is 123456' }, 'security');
+assert.equal(actual.confidence, 0.99);
+assert.equal(actual.retentionPolicy, 'auth-code-1d');
+assert.deepEqual(actual.reasonCodes, ['subject.auth-code']);
+
+actual = expectClassification({ subject: 'Use this one-time code to sign in' }, 'security');
+assert.equal(actual.retentionPolicy, 'auth-code-1d');
+
+actual = expectClassification({ subject: 'Security alert: new sign-in' }, 'security');
+assert.equal(actual.confidence, 0.96);
+assert.equal(actual.retentionPolicy, 'security-alert-30d');
+
+actual = expectClassification({ subject: 'Unusual login detected — please review' }, 'security', true);
+assert.equal(actual.retentionPolicy, 'security-alert-30d');
+
+actual = expectClassification({ subject: 'Verify your account' }, 'security', true);
+assert.equal(actual.retentionPolicy, '', 'generic security mail must not receive automatic retention');
+
+expectClassification({ subject: 'Verification completed successfully' }, 'other');
 
 actual = expectClassification({
 	subject: 'Weekly engineering digest',

@@ -60,6 +60,10 @@ assert.match(manager, /MODEL_PERSIST_CONFIDENCE_THRESHOLD\s*=\s*0\.82/,
 	'only high-confidence semantic results may become durable');
 assert.match(manager, /AUTOMATIC_CATEGORY_FLAG/,
 	'automatic categories need distinct provenance from user corrections');
+assert.match(manager, /retentionKeyword\(retentionPolicy\)/,
+	'only deterministic rule results may select a durable retention keyword');
+assert.match(manager, /writeMessageCategory\(message, result\.category, true, result\.retentionPolicy\)/,
+	'automatic persistence must store category and retention signals together');
 assert.match(manager, /BEGIN PGP MESSAGE/,
 	'encrypted armor must be excluded from semantic classification');
 assert.match(manager, /resultCache\[item\.cacheKey\]\s*=\s*\[/,
@@ -103,6 +107,8 @@ assert.match(manager, /const saved = await writeMessageCategory\(message, catego
 const folder = read('dev/Stores/User/Folder.js');
 assert.match(folder, /!value\.startsWith\('\$smcat-'\)/,
 	'reserved correction keywords must stay out of normal tags');
+assert.match(folder, /!value\.startsWith\('\$smret-'\)/,
+	'reserved retention keywords must stay out of normal tags');
 
 const messageModel = read('dev/Model/Message.js');
 assert.match(messageModel, /automaticCategoryStored:[\s\S]*manualCategory:/,
@@ -111,6 +117,8 @@ assert.match(messageModel, /automaticCategoryStored:[\s\S]*manualCategory:/,
 const categoryModule = read('dev/Classifier/Categories.js');
 assert.match(categoryModule, /SMART_CATEGORY_VALUES = Object\.freeze/);
 assert.match(categoryModule, /parseCategoryFolderRoutes/);
+assert.match(categoryModule, /'auth-code-1d': '\$smret-auth-code'/);
+assert.match(categoryModule, /'security-alert-30d': '\$smret-security-alert'/);
 
 const folderList = read('dev/View/User/MailBox/FolderList.js'),
 	folderTemplate = read('snappymail/v/0.0.0/app/templates/Views/User/MailFolderList.html');

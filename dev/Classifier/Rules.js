@@ -17,7 +17,11 @@ const TEXT_BUDGET = 2048,
 	FINANCE_SUBJECT = /\b(?:invoice|payment (?:received|confirmed|failed|declined|due)|amount due|billing statement|account statement|remittance advice|purchase[- ]?order|refund (?:issued|processed)|tax (?:document|form)|payroll)\b/i,
 	FINANCE_ACTION = /\b(?:past due|overdue|amount due|pay by|payment (?:failed|declined)|action required)\b/i,
 	// eslint-disable-next-line max-len
-	SECURITY_SUBJECT = /\b(?:security alert|unusual (?:sign[ -]?in|login|activity)|new (?:sign[ -]?in|login)|password (?:reset|changed|expires)|two[- ]factor|2fa|one[- ]time (?:code|password)|verification code|verify your (?:account|email|identity)|account locked|suspicious activity)\b/i,
+	AUTH_CODE_SUBJECT = /\b(?:(?:(?:authentication|verification|security|sign[ -]?in|login|access|two[- ]factor|2fa)\s+(?:code|otp|passcode))|(?:one[- ]time (?:code|password|passcode))|(?:(?:code|otp|passcode)\s+(?:for|to)\s+(?:authenticate|verify|sign[ -]?in|log[ -]?in)))\b/i,
+	// eslint-disable-next-line max-len
+	SECURITY_ALERT_SUBJECT = /\b(?:security alert|unusual (?:sign[ -]?in|login|activity)|new (?:sign[ -]?in|login)|login notification|sign[ -]?in notification|password (?:reset|changed|expires)|account locked|suspicious activity)\b/i,
+	// eslint-disable-next-line max-len
+	SECURITY_SUBJECT = /\b(?:two[- ]factor|2fa|verify your (?:account|email|identity))\b/i,
 	// eslint-disable-next-line max-len
 	EXPLICIT_ACTION = /\b(?:(?:action|response|approval|signature) required|please (?:review|sign|approve|confirm|verify|respond))\b/i,
 	ROCKSIGN_LINK = /https:\/\/sign\.boompay\.ca\/s\/[A-Za-z0-9_-]{8,}(?:[\s"'<>)]|$)/i,
@@ -98,13 +102,21 @@ const normalize = value => 'string' === typeof value
 
 		return { contentType, autoSubmitted, listId, listUnsubscribe, precedence, subject, preview, attachments };
 	},
-	result = (category, confidence, actionRequired = false, actionConfidence = 0, reasonCodes = []) => Object.freeze({
+	result = (
+		category,
+		confidence,
+		actionRequired = false,
+		actionConfidence = 0,
+		reasonCodes = [],
+		retentionPolicy = ''
+	) => Object.freeze({
 		category,
 		confidence,
 		actionRequired,
 		actionConfidence,
 		source: 'rules',
-		reasonCodes: Object.freeze([...new Set(reasonCodes)])
+		reasonCodes: Object.freeze([...new Set(reasonCodes)]),
+		retentionPolicy
 	}),
 	isDocument = attachment => DOCUMENT_MIME.test(attachment.mimeType) || DOCUMENT_FILE.test(attachment.fileName),
 	actionFor = (category, metadata, reasonCodes) => {
@@ -188,13 +200,20 @@ export function classifyMessageMetadata(input) {
 		offer('finance', 0.92, 'subject.finance');
 	}
 
-	if (SECURITY_SUBJECT.test(subject)) {
+	if (AUTH_CODE_SUBJECT.test(subject)) {
+		offer('security', 0.99, 'subject.auth-code');
+	} else if (SECURITY_ALERT_SUBJECT.test(subject)) {
+		offer('security', 0.96, 'subject.security-alert');
+	} else if (SECURITY_SUBJECT.test(subject)) {
 		offer('security', 0.93, 'subject.security');
 	}
 
 	if (best) {
 		const [actionRequired, actionConfidence, reasonCodes] = actionFor(best.category, metadata, best.reasonCodes);
-		return result(best.category, best.confidence, actionRequired, actionConfidence, reasonCodes);
+		const retentionPolicy = reasonCodes.includes('subject.auth-code')
+			? 'auth-code-1d'
+			: reasonCodes.includes('subject.security-alert') ? 'security-alert-30d' : '';
+		return result(best.category, best.confidence, actionRequired, actionConfidence, reasonCodes, retentionPolicy);
 	}
 
 	if (metadata.listId || metadata.listUnsubscribe) {

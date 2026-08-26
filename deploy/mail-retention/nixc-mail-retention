@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Copyright © 2026 ColinKnapp.com. All rights reserved.
+set -euo pipefail
+
+doveadm_bin="${DOVEADM_BIN:-/usr/bin/doveadm}"
+users_file="${MAIL_RETENTION_USERS_FILE:-/etc/nixc-mail-retention/users}"
+trash_mailbox="${MAIL_RETENTION_TRASH_MAILBOX:-Trash}"
+
+fail() {
+	printf 'nixc-mail-retention: %s\n' "$*" >&2
+	exit 1
+}
+
+[[ -x "$doveadm_bin" ]] || fail "doveadm is not executable: $doveadm_bin"
+[[ -r "$users_file" ]] || fail "users file is not readable: $users_file"
+[[ "$trash_mailbox" =~ ^[A-Za-z0-9._/-]+$ ]] || fail 'unsafe Trash mailbox name'
+
+mailboxes=(INBOX 'Archive*' 'Smart*' 'Categories*')
+policies=(
+	'$smret-auth-code:1d'
+	'$smret-security-alert:30d'
+)
+
+while IFS= read -r user || [[ -n "$user" ]]; do
+	user="${user%%#*}"
+	user="${user//[[:space:]]/}"
+	[[ -z "$user" ]] && continue
+	[[ "$user" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || fail "unsafe mailbox account: $user"
+	for policy in "${policies[@]}"; do
+		keyword="${policy%%:*}"
+		age="${policy#*:}"
+		for mailbox in "${mailboxes[@]}"; do
+			"$doveadm_bin" move -u "$user" "$trash_mailbox" \
+				mailbox "$mailbox" keyword "$keyword" savedbefore "$age"
+		done
+	done
+done < "$users_file"

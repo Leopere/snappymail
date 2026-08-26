@@ -36,7 +36,13 @@ Server-side Sieve is the durable automation layer. It handles deterministic case
 - CIBC, receipts, and invoices to `Archive.Smart.Finance`
 - KWLUG and other mailing lists to `Archive.Smart.Newsletters`
 - Netdata, YouTrack, GitHub, GitLab, OVH, SoyouStart, Cloudflare, and similar automated updates to `Archive.Smart.Notifications`
-- Login, password, and security alerts to `Archive.Smart.Security`
+- Non-expiring password and account-security records to `Archive.Smart.Security`
+
+Authentication codes and login notifications are an exception. SnappyMail
+marks them with the retention keywords documented in
+`docs/auth-mail-retention.md`. Server sorting must keep those messages out of
+Smart Archive so they remain visible until the retention service moves them to
+Trash.
 
 These rules should use stable envelope, sender, domain, list, and subject patterns. Sieve remains the source of truth for promoted automation.
 
@@ -104,6 +110,9 @@ Each suggestion should include enough evidence for review:
 - Rule promotion is a separate explicit action. Show the proposed match pattern and destination before changing server-side Sieve.
 - Curated deterministic defaults are versioned product policy, not semantic rule promotion. They must be idempotent and removable without touching user rules.
 - Smart Archive never permanently deletes mail. Low-value automated mail moves to `Archive.Smart.Notifications`; actual junk uses Spam or Trash.
+- Authentication-mail retention is separate from Smart Archive. It moves only
+  conservatively tagged messages to recoverable Trash after the documented
+  delay.
 - Failure to classify, move, or promote a rule must leave the message safely in its current location.
 
 For each applied move, retain a manifest entry containing:

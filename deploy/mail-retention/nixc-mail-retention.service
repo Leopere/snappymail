@@ -1,0 +1,13 @@
+[Unit]
+Description=Move expired SnappyMail authentication mail to Trash
+After=dovecot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/nixc-mail-retention
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/user-data/mail
