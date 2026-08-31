@@ -99,9 +99,15 @@ DOCKER_CONFIG="$docker_config" docker run --rm --platform linux/amd64 \
     --source "$DEPLOY_IT_COMMIT"
   ./scripts/verify.sh
   BOOMPAY_INFRA_ROOT="$controller_root" \
+  BOOMPAY_PLATFORM_ROOT=none \
+  BOOMPAY_GARAGE_ROOT=none \
+  BOOMPAY_CAPITAL_ROOT=none \
+  BOOMPAY_PARTNERS_ROOT=none \
   BOOMPAY_ENV_FILE="$controller_env" \
   BOOMPAY_IDENTITY_LIFECYCLE=none \
   BOOMPAY_APPLICATION_RELEASE=snappymail \
+  BOOMPAY_OPERATOR_WORKSPACE_LIFECYCLE=none \
+  BOOMPAY_TRUST_PINNED_HOST_IP=1 \
   GH_CONFIG_DIR="$gh_config_dir" \
     "$ship_it_bin"
 )

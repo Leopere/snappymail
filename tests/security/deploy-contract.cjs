@@ -32,7 +32,13 @@ for (const required of [
 	'su www-data -s /bin/sh -c "php -r',
 	'./scripts/set-snappymail-release.py',
 	'./scripts/verify.sh',
+	'BOOMPAY_PLATFORM_ROOT=none',
+	'BOOMPAY_GARAGE_ROOT=none',
+	'BOOMPAY_CAPITAL_ROOT=none',
+	'BOOMPAY_PARTNERS_ROOT=none',
 	'BOOMPAY_APPLICATION_RELEASE=snappymail',
+	'BOOMPAY_OPERATOR_WORKSPACE_LIFECYCLE=none',
+	'BOOMPAY_TRUST_PINNED_HOST_IP=1',
 	'"$ship_it_bin"',
 	'https://mail.boompay.ca/'
 ]) {
