@@ -1,6 +1,6 @@
 ---
 name: openpgp-wkd-gnupg
-description: "Use when working in this SnappyMail fork on OpenPGP WKD/public key discovery, hashed .well-known publication, WKD policy/manifest/TXT discovery, Mail-in-a-Box GnuPG provisioning, or syncing static WKD sites."
+description: "Use when working in this SnappyMail fork on OpenPGP WKD/public key discovery, hashed .well-known publication, WKD policy/manifest/TXT discovery, Mail-in-a-Box GnuPG provisioning, syncing static WKD sites, or independently proving WKD-based decryption with one-shot-tally."
 ---
 
 # OpenPGP WKD GnuPG
@@ -20,3 +20,37 @@ At send time, accept only a fresh key from a domain-owned public WKD endpoint or
 ## Code Map
 
 WKD hashing and publication live in `snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php`. WKD recipient discovery and optional public manifest/TXT lookup live in `snappymail/v/0.0.0/app/libraries/snappymail/pgp/keyservers.php`. HTTP routes are in `snappymail/v/0.0.0/app/libraries/RainLoop/Service.php` and `ServiceActions.php`; the opaque browser vault endpoint is in `snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Pgp.php`. Browser key lifecycle is in `dev/Stores/User/OpenPGP.js` and `dev/Storage/OpenPgpVault.js`. Legacy GnuPG provisioning and static sync scripts are not part of the browser-vault key lifecycle.
+
+## Independent Decryption Proof
+
+Read [references/one-shot-delivery.md](references/one-shot-delivery.md) when the
+task is to prove that an independent sender can discover the active recipient
+key and that the recipient can decrypt the delivered ciphertext.
+
+Keep these boundaries:
+
+- Use the fixed `one-shot-tally credential send` path only for
+  `colin.knapp@boompay.ca`. Do not redirect it to another sender, recipient,
+  host, key, or mail client.
+- Require a clean GnuPG `clear,wkd` lookup and the exact current mailbox UID,
+  primary fingerprint, and encryption-subkey fingerprint. A local keyring,
+  embedded certificate, keyserver, DNS record, or `gmail-cli` is not a
+  fallback.
+- Treat RFC 7929 DNS `OPENPGPKEY` as separate from HTTPS WKD. This proof does
+  not require a Cloudflare DNS change or DNSSEC.
+- Pass challenge plaintext only through stdin. Never place the token in argv,
+  an environment variable, a receipt, repository content, commentary, or a
+  tally record. Keep only its SHA-256 commitment.
+- A `submitted` receipt and an LMTP `INBOX` event prove transport, not
+  decryption. Accept the test only after the recipient returns the exact token
+  and its SHA-256 value matches the retained commitment.
+- SnappyMail decrypts in the browser vault. The `mail.boompay.ca` server stores
+  and serves the ciphertext but must not receive the browser-vault private key.
+
+Run `one-shot-tally credential key-check` before each proof. Verify that the
+local sender and the restricted receiver report the same shipped
+`one-shot-tally` version before sending. If the fresh WKD identity changes,
+stop and update the pinned fingerprints, tests, documentation, and receiver as
+one reviewed change; never silently accept a different key.
+
+_Copyright © 2026 ColinKnapp.com. All rights reserved._

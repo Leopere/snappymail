@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenPGP WKD and GnuPG"
+  short_description: "Verify OpenPGP WKD delivery and decryption"
+  default_prompt: "Use $openpgp-wkd-gnupg to verify or repair OpenPGP WKD discovery and prove end-to-end decryption."
