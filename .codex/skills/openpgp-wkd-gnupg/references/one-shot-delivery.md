@@ -62,9 +62,9 @@ exact mailbox UID and a valid encryption-capable key.
 | Sender | `colin@nixc.us` |
 | Signing-subkey fingerprint | `33EA65A9C078126556C150E1EA43219BE7B419F1` |
 | Receiver | `box.p.nixc.us:/usr/local/bin/one-shot-tally` |
-| Shipped sender source | `085250c2002e7c5b3d1243217d9ccbdddb9e6108` |
+| Shipped sender source | `0de5cdb27c765e29a3faa521ae090affd8200a5b` |
 | Sender and receiver release | `one-shot-tally 1.16.0` |
-| Receiver Linux artifact SHA-256 | `05b2cdc3f85354ee7ead07e6eac5df8f33275157be10f9d9a30a32c3edc0df81` |
+| Receiver Linux artifact SHA-256 | `78bc01ca1bd1c4b2a17edd7aca8256cbb4f0e4969761b993e3da0603e484fcee` |
 
 ## Repeatable Procedure
 
@@ -87,7 +87,7 @@ one-shot-tally credential key-check
   -oPermitLocalCommand=no -oControlMaster=no -oControlPath=none \
   -oControlPersist=no -i "$HOME/.ssh/id_ed25519" \
   root@box.p.nixc.us \
-  'printf "%s  %s\n" "05b2cdc3f85354ee7ead07e6eac5df8f33275157be10f9d9a30a32c3edc0df81" "/usr/local/bin/one-shot-tally" | sha256sum -c - && /usr/local/bin/one-shot-tally version'
+  'printf "%s  %s\n" "78bc01ca1bd1c4b2a17edd7aca8256cbb4f0e4969761b993e3da0603e484fcee" "/usr/local/bin/one-shot-tally" | sha256sum -c - && /usr/local/bin/one-shot-tally version'
 ```
 
 `credential key-check` must report the exact recipient and the fingerprints
