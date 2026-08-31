@@ -1,6 +1,6 @@
 ---
 name: openpgp-wkd-gnupg
-description: "Use when working in this SnappyMail fork on OpenPGP WKD/public key discovery, hashed .well-known publication, WKD policy/manifest/TXT discovery, Mail-in-a-Box GnuPG provisioning, syncing static WKD sites, or independently proving WKD-based decryption with one-shot-tally."
+description: "Use when working in this SnappyMail fork on OpenPGP WKD/public key discovery, hashed .well-known publication, WKD policy/manifest/TXT discovery, Mail-in-a-Box GnuPG provisioning, syncing static WKD sites, delivering an exact caller-provided body to colin.knapp@boompay.ca through the fixed one-shot-tally transport, or explicitly proving WKD-based decryption."
 ---
 
 # OpenPGP WKD GnuPG
@@ -21,29 +21,39 @@ At send time, accept only a fresh key from a domain-owned public WKD endpoint or
 
 WKD hashing and publication live in `snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php`. WKD recipient discovery and optional public manifest/TXT lookup live in `snappymail/v/0.0.0/app/libraries/snappymail/pgp/keyservers.php`. HTTP routes are in `snappymail/v/0.0.0/app/libraries/RainLoop/Service.php` and `ServiceActions.php`; the opaque browser vault endpoint is in `snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Pgp.php`. Browser key lifecycle is in `dev/Stores/User/OpenPGP.js` and `dev/Storage/OpenPgpVault.js`. Legacy GnuPG provisioning and static sync scripts are not part of the browser-vault key lifecycle.
 
-## Independent Decryption Proof
+## Independent Encrypted Delivery
 
 Read [references/one-shot-delivery.md](references/one-shot-delivery.md) when the
-task is to prove that an independent sender can discover the active recipient
-key and that the recipient can decrypt the delivered ciphertext.
+task is to deliver a caller-provided body through an independent sender or to
+prove that the recipient can decrypt ciphertext addressed to the active key.
 
 Keep these boundaries:
 
 - Use the fixed `one-shot-tally credential send` path only for
   `colin.knapp@boompay.ca`. Do not redirect it to another sender, recipient,
   host, key, or mail client.
+- For a normal send, pass the exact caller-provided UTF-8 body through stdin.
+  Do not prepend, append, summarize, rewrite, or replace it with a challenge,
+  token, template, or success claim. The command fixes the outer subject to
+  `OpenPGP credential delivery`; the decrypted inner `text/plain` MIME body is
+  the caller's complete stdin stream.
+- Generate a hidden token only when the user explicitly requests an independent
+  decryption challenge. Never substitute a challenge for a requested message.
 - Require a clean GnuPG `clear,wkd` lookup and the exact current mailbox UID,
   primary fingerprint, and encryption-subkey fingerprint. A local keyring,
   embedded certificate, keyserver, DNS record, or `gmail-cli` is not a
   fallback.
 - Treat RFC 7929 DNS `OPENPGPKEY` as separate from HTTPS WKD. This proof does
   not require a Cloudflare DNS change or DNSSEC.
-- Pass challenge plaintext only through stdin. Never place the token in argv,
-  an environment variable, a receipt, repository content, commentary, or a
-  tally record. Keep only its SHA-256 commitment.
+- Pass all message plaintext only through stdin. Never place sensitive body
+  text in argv, an environment variable, a receipt, repository content,
+  commentary, or a tally record. For an explicitly requested challenge, keep
+  only the token's SHA-256 commitment.
 - A `submitted` receipt and an LMTP `INBOX` event prove transport, not
-  decryption. Accept the test only after the recipient returns the exact token
-  and its SHA-256 value matches the retained commitment.
+  decryption. For a normal message, require the recipient to confirm that the
+  expected body rendered after decryption. For an explicit challenge, accept
+  the proof only when the intended recipient returns the token through an
+  established trusted channel and it matches the retained commitment.
 - SnappyMail decrypts in the browser vault. The `mail.boompay.ca` server stores
   and serves the ciphertext but must not receive the browser-vault private key.
 

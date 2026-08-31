@@ -1,20 +1,24 @@
 # OpenPGP WKD One-Shot Delivery Runbook
 
-Use this runbook to prove that an independent sender can discover the current
-public key for `colin.knapp@boompay.ca`, deliver signed-and-encrypted PGP/MIME,
-and receive a secret back from the browser that decrypted it.
+Use this runbook to have an independent sender discover the current public key
+for `colin.knapp@boompay.ca` and deliver the caller's exact UTF-8 body as
+signed-and-encrypted PGP/MIME. Use the hidden-token variant only when the user
+explicitly requests an independent decryption proof.
 
 The fixed path is:
 
 ```text
-clean GnuPG WKD lookup
+caller-provided body through stdin
+  -> clean GnuPG WKD lookup
   -> validate exact UID and encryption subkey
   -> sign and encrypt locally
   -> restricted SSH submission to box.p.nixc.us
   -> validated sendmail/Postfix handoff
   -> LMTP delivery to INBOX
   -> browser-vault decryption in SnappyMail
-  -> returned-token commitment match
+  -> recipient confirms the expected body
+
+optional explicit proof: returned-token commitment match
 ```
 
 ## Protocol Boundaries
@@ -39,8 +43,9 @@ private key in the browser vault.
 
 ## Current Pinned Identity
 
-Verify these values live before every challenge. They are an explicit fail-
-closed pin, not a permanent promise that the user can never rotate keys.
+Verify these values live before every delivery or challenge. They are an
+explicit fail-closed pin, not a permanent promise that the user can never
+rotate keys.
 
 | Field | Value |
 | --- | --- |
@@ -97,13 +102,14 @@ temporary candidate, and atomically rename the candidate over the live path.
 Then verify the live hash, version, and backup hash. Never stream an unchecked
 binary directly over the live file.
 
-A request to repeat this decryption challenge authorizes submission through the
-existing receiver only. It does not authorize replacing the production
-receiver binary. The current `../one-shot-tally/.deploy-it.json` installs the
-sender locally and is not a remote receiver deployment contract. Change the
-receiver only when the user explicitly authorizes that exact production target
-and artifact, or after the user trusts a tracked contract that owns the remote
-update. Otherwise, report the mismatch and stop before mutation.
+A request to repeat this delivery or decryption challenge authorizes submission
+through the existing receiver only. It does not authorize replacing the
+production receiver binary. The current `../one-shot-tally/.deploy-it.json`
+installs the sender locally and is not a remote receiver deployment contract.
+Change the receiver only when the user explicitly authorizes that exact
+production target and artifact, or after the user trusts a tracked contract
+that owns the remote update. Otherwise, report the mismatch and stop before
+mutation.
 
 ### 2. Diagnose WKD with an empty GnuPG home when needed
 
@@ -132,7 +138,44 @@ gpg --no-options --homedir "$wkd_home" --batch --with-colons \
 a stale local certificate from satisfying the check. Kill the temporary GnuPG
 processes before removing the directory.
 
-### 3. Send a hidden challenge
+### 3. Send the requested body
+
+For a normal send, use the exact body the caller supplied. Do not add an
+introduction, footer, challenge, token, template, delivery report, or success
+claim unless it is part of the requested body.
+
+Generate a fresh operation ID, then start the fixed sender:
+
+```sh
+message_operation=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+one-shot-tally credential send \
+  --operation-id "$message_operation" \
+  --account snappymail-openpgp-message
+```
+
+Write or paste the body only through the command's stdin, then send EOF. In
+automation, connect the existing body byte stream directly to stdin. Do not put
+the body in argv or an environment variable.
+
+The complete stdin stream becomes the decoded `text/plain; charset=utf-8`
+inner MIME body byte-for-byte. The sender does not trim whitespace, normalize
+line endings, prepend a template, or interpret the text as a token. Input must
+be nonempty valid UTF-8, contain no NUL bytes, and not exceed 64 KiB.
+
+The compiled command fixes the sender, recipient, signing key, recipient key,
+SSH identity, receiver host, and outer subject. It passes only PGP/MIME
+ciphertext to the receiver. Local and receiver receipts contain metadata and a
+ciphertext hash, never plaintext or a plaintext hash.
+
+Never retry an existing operation ID. Exit status 3 means the outcome is
+unknown; resolve it from the receipt and mailbox before creating a new
+operation.
+
+#### Optional: send a hidden challenge
+
+Use this variant only when the user explicitly requests a decryption challenge.
+Do not substitute it for a requested email body.
 
 Do not enable shell tracing. Generate the token at runtime, keep it in a
 non-exported shell variable, pass the message through stdin, and erase the
@@ -160,16 +203,7 @@ printf 'operation_id=%s\ncommitment_sha256=%s\n' \
 exit "$challenge_status"
 ```
 
-The compiled command fixes the sender, recipient, signing key, recipient key,
-SSH identity, receiver host, and outer subject. It passes only PGP/MIME
-ciphertext to the receiver. Local and receiver receipts contain metadata and a
-ciphertext hash, never plaintext or a plaintext hash.
-
-Never retry an existing operation ID. Exit status 3 means the outcome is
-unknown; resolve it from the receipt and mailbox before creating a new
-operation.
-
-### 4. Verify transport without reading the secret
+### 4. Verify transport and recipient display
 
 Require all of these facts:
 
@@ -177,14 +211,20 @@ Require all of these facts:
 2. The receiver receipt has the same operation ID, ciphertext SHA-256 value,
    byte count, fingerprints, sender, recipient, and `submitted` state.
 3. Postfix and LMTP logs show the matching message ID stored in `INBOX`.
-4. The recipient opens the message in SnappyMail, sees successful decryption,
-   and returns the exact token.
-5. Hash the returned token through silent stdin and compare it with the retained
-   commitment. Do not repeat the token in the report or commit it to a file.
+4. The recipient opens the message in SnappyMail and confirms that the expected
+   body rendered after decryption.
+5. For an explicitly requested challenge only, confirm that the intended
+   recipient returned the token through an established trusted channel. Hash
+   the token through silent stdin and compare it with the retained commitment.
+   Do not repeat the token in the report or commit it to a file.
 
 A transport receipt proves submission. An `INBOX` log proves delivery. Only
-the returned-token commitment match proves that the recipient had the private
-key needed to decrypt this ciphertext.
+recipient confirmation proves that the expected body rendered after browser-
+vault decryption. For an explicit challenge, the returned-token commitment
+match provides evidence of successful recipient decryption only when the return
+channel establishes the responder as the intended recipient. Without that
+responder binding, the match proves only that someone returned the generated
+token.
 
 Signature verification is independent. “Signature could not be verified” can
 coexist with successful decryption when the recipient has not discovered or

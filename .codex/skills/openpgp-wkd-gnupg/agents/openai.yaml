@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenPGP WKD and GnuPG"
-  short_description: "Verify OpenPGP WKD delivery and decryption"
-  default_prompt: "Use $openpgp-wkd-gnupg to verify or repair OpenPGP WKD discovery and prove end-to-end decryption."
+  short_description: "Deliver exact OpenPGP bodies and verify WKD"
+  default_prompt: "Use $openpgp-wkd-gnupg to deliver the exact requested email body through WKD-backed OpenPGP or run an explicitly requested decryption proof."
