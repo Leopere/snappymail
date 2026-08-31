@@ -39,8 +39,9 @@ Keep these boundaries:
   the caller's complete stdin stream.
 - Generate a hidden token only when the user explicitly requests an independent
   decryption challenge. Never substitute a challenge for a requested message.
-- Require a clean GnuPG `clear,wkd` lookup and the exact current mailbox UID,
-  primary fingerprint, and encryption-subkey fingerprint. A local keyring,
+- Require a clean GnuPG `clear,wkd` lookup, the exact current mailbox UID, and
+  a valid encryption-capable key. Report observed fingerprints for diagnostics;
+  do not enforce them as production pins. A local keyring,
   embedded certificate, keyserver, DNS record, or `gmail-cli` is not a
   fallback.
 - Treat RFC 7929 DNS `OPENPGPKEY` as separate from HTTPS WKD. This proof does
@@ -59,8 +60,8 @@ Keep these boundaries:
 
 Run `one-shot-tally credential key-check` before each proof. Verify that the
 local sender and the restricted receiver report the same shipped
-`one-shot-tally` version before sending. If the fresh WKD identity changes,
-stop and update the pinned fingerprints, tests, documentation, and receiver as
-one reviewed change; never silently accept a different key.
+`one-shot-tally` version before sending. A fresh WKD identity can reflect normal
+key rotation; confirm that the exact mailbox UID and valid encryption key pass
+the compiled checks.
 
 _Copyright © 2026 ColinKnapp.com. All rights reserved._

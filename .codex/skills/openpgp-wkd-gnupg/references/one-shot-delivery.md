@@ -1,5 +1,9 @@
 # OpenPGP WKD One-Shot Delivery Runbook
 
+> Proprietary operational material. This file and `one-shot-tally` are not
+> licensed under any present or future open-source license for the surrounding
+> SnappyMail fork. Copyright © 2026 ColinKnapp.com. All rights reserved.
+
 Use this runbook to have an independent sender discover the current public key
 for `colin.knapp@boompay.ca` and deliver the caller's exact UTF-8 body as
 signed-and-encrypted PGP/MIME. Use the hidden-token variant only when the user
@@ -41,11 +45,12 @@ Do not say that the mail server decrypts the message. The server accepts and
 stores ciphertext. SnappyMail decrypts in the authenticated browser with the
 private key in the browser vault.
 
-## Current Pinned Identity
+## Debugging Identity Evidence
 
-Verify these values live before every delivery or challenge. They are an
-explicit fail-closed pin, not a permanent promise that the user can never
-rotate keys.
+These values record the successful August 2026 debugging session. They are
+useful when comparing evidence, but they are not production recipient-key
+pins. Production accepts the current clean WKD result only when it contains the
+exact mailbox UID and a valid encryption-capable key.
 
 | Field | Value |
 | --- | --- |
@@ -85,8 +90,9 @@ one-shot-tally credential key-check
   'printf "%s  %s\n" "05b2cdc3f85354ee7ead07e6eac5df8f33275157be10f9d9a30a32c3edc0df81" "/usr/local/bin/one-shot-tally" | sha256sum -c - && /usr/local/bin/one-shot-tally version'
 ```
 
-`credential key-check` must report the exact recipient, primary fingerprint,
-encryption-subkey fingerprint, and key ID above. Confirm the receiver runs the
+`credential key-check` must report the exact recipient and the fingerprints
+and key ID it observed. Fingerprints can differ after valid key rotation; they
+are diagnostic output, not a production gate. Confirm the receiver runs the
 exact expected artifact and release above. The read-only receiver check uses
 the existing administrative key; the compiled sender uses its separate
 forced-command credential key. If either key or the pinned host-key entry is
