@@ -48,7 +48,12 @@ for (const required of [
 assert(!deploy.includes('${HOME'), 'The deploy-it snapshot clears HOME; deployment must resolve the OS account home directory.');
 assert(deploy.includes('pwd.getpwuid(os.getuid()).pw_dir'));
 assert(deploy.includes('docker_config/cli-plugins/docker-buildx'));
-assert(deploy.includes('DOCKER_CONFIG="$docker_config" docker buildx version'));
+assert(deploy.includes('DOCKER_CONFIG="$operator_home/.docker" docker context show'));
+assert(deploy.includes("--format '{{.Endpoints.docker.Host}}' \"$docker_context\""));
+assert(deploy.includes("*) fail 'the active Docker context must use a local Unix socket'"));
+assert(deploy.includes('[ -S "$docker_socket" ] && [ ! -L "$docker_socket" ]'));
+assert(deploy.includes('DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config"'));
+assert(deploy.includes("docker info --format '{{.ServerVersion}}' >/dev/null || fail 'the active Docker daemon is unavailable'"));
 assert(deploy.includes('["gh", "auth", "token", "--hostname", "github.com"]'));
 assert(deploy.includes('os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600'));
 assert(deploy.includes('{"auths": {"ghcr.io": {"auth": credential}}}'));

@@ -44,11 +44,26 @@ tag="$registry:git-$DEPLOY_IT_COMMIT"
 [ -x "$buildx_binary" ] && [ ! -L "$buildx_binary" ] || fail 'Docker Buildx binary is unavailable'
 [ -x "$ship_it_bin" ] || fail 'ship-it is unavailable'
 
+docker_context="$(DOCKER_CONFIG="$operator_home/.docker" docker context show)"
+[ -n "$docker_context" ] || fail 'the active Docker context could not be resolved'
+docker_host="$(DOCKER_CONFIG="$operator_home/.docker" docker context inspect \
+  --format '{{.Endpoints.docker.Host}}' "$docker_context")"
+case "$docker_host" in
+  unix:///*) ;;
+  *) fail 'the active Docker context must use a local Unix socket' ;;
+esac
+docker_socket="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${docker_host#unix://}")"
+[ -S "$docker_socket" ] && [ ! -L "$docker_socket" ] || fail 'the active Docker socket is unavailable'
+docker_host="unix://$docker_socket"
+
 docker_config="$(mktemp -d)"
 metadata="$(mktemp)"
 mkdir -p "$docker_config/cli-plugins"
 ln -s "$buildx_binary" "$docker_config/cli-plugins/docker-buildx"
-DOCKER_CONFIG="$docker_config" docker buildx version >/dev/null || fail 'Docker Buildx is unavailable'
+DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" \
+  docker buildx version >/dev/null || fail 'Docker Buildx is unavailable'
+DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" \
+  docker info --format '{{.ServerVersion}}' >/dev/null || fail 'the active Docker daemon is unavailable'
 cleanup() {
   rm -f "$metadata"
   find "$docker_config" -type f -delete 2>/dev/null || true
@@ -79,7 +94,7 @@ with os.fdopen(fd, "w", encoding="utf-8") as config:
     config.write("\n")
 PY
 
-DOCKER_CONFIG="$docker_config" docker buildx build \
+DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker buildx build \
   --platform linux/amd64 \
   --file "$source_root/.docker/release/Dockerfile" \
   --build-arg "SOURCE_REVISION=$DEPLOY_IT_COMMIT" \
@@ -100,8 +115,8 @@ print(value)
 PY
 )"
 image="$registry@$digest"
-DOCKER_CONFIG="$docker_config" docker buildx imagetools inspect "$image" >/dev/null
-DOCKER_CONFIG="$docker_config" docker run --rm --platform linux/amd64 \
+DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker buildx imagetools inspect "$image" >/dev/null
+DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker run --rm --platform linux/amd64 \
   --entrypoint /bin/sh "$image" -ceu '
     test "$(stat -c "%U:%G:%a" /snappymail)" = "www-data:www-data:550"
     su nginx -s /bin/sh -c "test -r /snappymail/index.php"
