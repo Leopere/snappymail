@@ -50,7 +50,6 @@ mkdir -p "$docker_config/cli-plugins"
 ln -s "$buildx_binary" "$docker_config/cli-plugins/docker-buildx"
 DOCKER_CONFIG="$docker_config" docker buildx version >/dev/null || fail 'Docker Buildx is unavailable'
 cleanup() {
-  DOCKER_CONFIG="$docker_config" docker logout ghcr.io >/dev/null 2>&1 || true
   rm -f "$metadata"
   find "$docker_config" -type f -delete 2>/dev/null || true
   find "$docker_config" -type l -delete 2>/dev/null || true
@@ -58,8 +57,27 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-GH_CONFIG_DIR="$gh_config_dir" gh auth token |
-  DOCKER_CONFIG="$docker_config" docker login ghcr.io -u Leopere --password-stdin >/dev/null
+GH_CONFIG_DIR="$gh_config_dir" python3 - "$docker_config/config.json" <<'PY'
+import base64
+import json
+import os
+import subprocess
+import sys
+
+token = subprocess.run(
+    ["gh", "auth", "token", "--hostname", "github.com"],
+    check=True,
+    stdout=subprocess.PIPE,
+    text=True,
+).stdout.strip()
+if not token or "\n" in token or "\r" in token:
+    raise SystemExit("deploy-production: GitHub CLI returned an invalid registry credential")
+credential = base64.b64encode(f"Leopere:{token}".encode()).decode()
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as config:
+    json.dump({"auths": {"ghcr.io": {"auth": credential}}}, config)
+    config.write("\n")
+PY
 
 DOCKER_CONFIG="$docker_config" docker buildx build \
   --platform linux/amd64 \
