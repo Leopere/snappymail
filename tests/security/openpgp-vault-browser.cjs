@@ -6,9 +6,19 @@ const { chromium } = require('playwright');
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'dev/Storage/OpenPgpVault.js'), 'utf8')
 	.replace('export const OpenPgpClientVault =', 'window.OpenPgpClientVault =');
+const browserExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+	|| [
+		'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+		'/Applications/Chromium.app/Contents/MacOS/Chromium',
+		'/usr/bin/google-chrome',
+		'/usr/bin/chromium'
+	].find(candidate => fs.existsSync(candidate));
 
 (async () => {
-	const browser = await chromium.launch({ headless: true });
+	const browser = await chromium.launch({
+		headless: true,
+		...(browserExecutable ? { executablePath: browserExecutable } : {})
+	});
 	try {
 		const context = await browser.newContext({ ignoreHTTPSErrors: true });
 		await context.route('https://vault.test/', route => route.fulfill({
@@ -100,6 +110,9 @@ const source = fs.readFileSync(path.join(root, 'dev/Storage/OpenPgpVault.js'), '
 				});
 			return {
 				serialized: JSON.stringify(created.vault),
+				payloadCipherUnchanged: JSON.stringify(created.vault.payload) === JSON.stringify(rotated.payload),
+				passwordWrapperChanged: JSON.stringify(created.vault.wrappers.password)
+					!== JSON.stringify(rotated.wrappers.password),
 				unlocked: unlocked.payload,
 				createLeavesDeviceUnchanged,
 				deviceUnlocked: deviceUnlocked.payload,
@@ -114,6 +127,8 @@ const source = fs.readFileSync(path.join(root, 'dev/Storage/OpenPgpVault.js'), '
 		});
 		assert(!result.serialized.includes('browser-only-private-material'));
 		assert(result.createLeavesDeviceUnchanged);
+		assert(result.payloadCipherUnchanged, 'Password rewrapping must not modify payload ciphertext.');
+		assert(result.passwordWrapperChanged, 'Password rewrapping must replace the password wrapper.');
 		assert.deepStrictEqual(result.unlocked, result.rotatedUnlocked);
 		assert.deepStrictEqual(result.unlocked, result.deviceUnlocked);
 		assert.deepStrictEqual(result.unlocked, result.rotatedDeviceUnlocked);

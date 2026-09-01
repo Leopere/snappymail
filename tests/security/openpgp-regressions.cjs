@@ -38,6 +38,8 @@ assert(
 assert(
 	pgpActions.includes('DoPgpClientVaultGet()')
 		&& pgpActions.includes('DoPgpClientVaultPut()')
+		&& pgpActions.includes('DoPgpClientVaultPasswordPut()')
+		&& !pgpActions.includes('DoPgpClientVaultPasswordCheck()')
 		&& pgpActions.includes('DoPgpClientVaultQuarantine()')
 		&& pgpActions.includes('DoPgpClientVaultRestore()')
 		&& pgpActions.includes("'.openpgp-client-vault'")
@@ -111,6 +113,37 @@ assert(
 const openPgpStore = read('dev/Stores/User/OpenPGP.js');
 const clientVault = read('dev/Storage/OpenPgpVault.js');
 const wkd = read('snappymail/v/0.0.0/app/libraries/snappymail/pgp/wkd.php');
+const recoverySettings = read('dev/Settings/User/Security.js');
+const recoveryTemplate = read('snappymail/v/0.0.0/app/templates/Views/User/SettingsSecurity.html');
+const securityLocale = JSON.parse(read('snappymail/v/0.0.0/app/localization/en/user.json'));
+const boomPayDomain = JSON.parse(read('deploy/snappymail-domains/boompay.ca.json'));
+assert(
+	pgpActions.includes("GetActionParam('Password', '')")
+		&& pgpActions.includes('\\hash_equals($account->IncPassword(), $password)')
+		&& pgpActions.includes('$this->imapConnect($account, false, $imap, 8)')
+		&& pgpActions.includes('$this->loginErrorDelay()')
+		&& pgpActions.includes("GetActionParam('passwordWrapper', '')")
+		&& pgpActions.includes('$alreadyApplied = $currentRevision === $expectedRevision + 1')
+		&& pgpActions.includes("$record['vault']['wrappers']['password'] = $wrapper")
+		&& openPgpStore.includes("Remote.post('PgpClientVaultPasswordPut'")
+		&& openPgpStore.includes('Password: currentPassword')
+		&& 2 === (openPgpStore.match(/response = await request\(\)/g) || []).length
+		&& openPgpStore.includes('JSON.stringify(vault.payload) !== JSON.stringify(current.vault.payload)')
+		&& openPgpStore.includes('await this.validateVaultPayload(verified.payload, record.publicKey)')
+		&& openPgpStore.includes('verified.vaultKey.fill(0)')
+		&& openPgpStore.includes("vaultRecoveryFailure('local-load'")
+		&& openPgpStore.includes("vaultRecoveryFailure('uncertain'")
+		&& recoverySettings.includes('recoverVaultPassword(form)')
+		&& recoverySettings.includes('OpenPGPUserStore.recoverVaultPassword(')
+		&& recoveryTemplate.includes('vaultRecoveryPreviousPassword')
+		&& recoveryTemplate.includes('vaultRecoveryCurrentPasswordConfirm')
+		&& securityLocale.SETTINGS_SECURITY.VAULT_RECOVERY_SUCCESS
+		&& true === boomPayDomain.IMAP.ssl.verify_peer
+		&& true === boomPayDomain.IMAP.ssl.verify_peer_name
+		&& true === boomPayDomain.SMTP.ssl.verify_peer
+		&& true === boomPayDomain.SMTP.ssl.verify_peer_name,
+	'Password recovery must verify the signed-in mailbox through fresh IMAP, replace only the vault wrapper, preserve key material, and expose a bounded UI over verified TLS.'
+);
 assert(
 	pgpActions.includes("$record['status'] = 'quarantined'")
 		&& pgpActions.includes('Wkd::unpublish($account->Email())')

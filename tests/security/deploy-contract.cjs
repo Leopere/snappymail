@@ -10,6 +10,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const manifest = JSON.parse(read('.deploy-it.json'));
 const deploy = read('scripts/deploy-production.sh');
 const dockerfile = read('.docker/release/Dockerfile');
+const entrypoint = read('.docker/release/files/entrypoint.sh');
 
 assert.deepStrictEqual(manifest, {
 	version: 1,
@@ -56,6 +57,16 @@ assert(dockerfile.includes('ARG SOURCE_REVISION'));
 assert(dockerfile.includes('LABEL org.opencontainers.image.revision="$SOURCE_REVISION"'));
 assert(dockerfile.includes('chown www-data:www-data /snappymail'));
 assert(dockerfile.includes('chmod 550 /snappymail'));
+assert(dockerfile.includes(
+	'COPY --chown=root:root deploy/snappymail-domains/boompay.ca.json /opt/snappymail-domains/boompay.ca.json'
+));
+assert(entrypoint.includes('MANAGED_BOOMPAY_DOMAIN=/opt/snappymail-domains/boompay.ca.json'));
+assert(entrypoint.includes('readlink -f "$SNAPPYMAIL_DOMAIN_PARENT"'));
+assert(entrypoint.includes('[ -L "$SNAPPYMAIL_DOMAIN_DIR" ]'));
+assert(entrypoint.includes('mktemp -d /tmp/snappymail-managed-domain.XXXXXX'));
+assert(entrypoint.includes('mv -fT "$SNAPPYMAIL_DOMAIN_STAGE/boompay.ca.json" "$SNAPPYMAIL_BOOMPAY_DOMAIN"'));
+assert(!entrypoint.includes('SNAPPYMAIL_BOOMPAY_DOMAIN_NEW'),
+	'The root entrypoint must not stage files at predictable paths in a web-writable directory.');
 for (const traversable of ['/etc', '/etc/nginx', '/usr', '/usr/local', '/usr/local/etc', '/usr/local/etc/php-fpm.d']) {
 	assert.match(
 		dockerfile,

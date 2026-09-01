@@ -86,6 +86,9 @@ const
 		.filter((value, index, values) => values.findIndex(entry => entry.fingerprint === value.fingerprint) === index)
 	),
 	privateKeyPayload = (armor, passphrase, fingerprint) => ({ armor, passphrase, fingerprint }),
+	vaultRecoveryFailure = (reason, message) => Object.assign(Error(message), {
+		openPgpVaultRecovery: reason
+	}),
 	signatureStatuses = async result => await Promise.all((result.signatures || []).map(async signature => {
 		let status = 0, error = '';
 		try {
@@ -377,7 +380,7 @@ export const OpenPGPUserStore = new class {
 		return this.importPublicKeys([armoredKey]);
 	}
 
-	async loadVaultPayload(payload, vaultKey, publicKey) {
+	async validateVaultPayload(payload, publicKey) {
 		if (!payload || 1 !== payload.version || !Array.isArray(payload.privateKeys)) {
 			throw Error('Invalid encrypted key vault payload');
 		}
@@ -392,7 +395,6 @@ export const OpenPGPUserStore = new class {
 				throw Error('Encrypted key fingerprint mismatch');
 			}
 			privateKeys.push(model);
-			await this.importPublicKeys([await keyArmor(key.toPublic())], false);
 		}
 		if (!privateKeys.length) {
 			throw Error('Encrypted key vault is empty');
@@ -404,6 +406,14 @@ export const OpenPGPUserStore = new class {
 			|| activeKey.fingerprint !== publishedKey.getFingerprint().toUpperCase()
 			|| !await keyCanEncrypt(activeKey.key)) {
 			throw Error('The encrypted private key does not match the published mailbox key');
+		}
+		return privateKeys;
+	}
+
+	async loadVaultPayload(payload, vaultKey, publicKey) {
+		const privateKeys = await this.validateVaultPayload(payload, publicKey);
+		for (const key of privateKeys) {
+			await this.importPublicKeys([await keyArmor(key.key.toPublic())], false);
 		}
 		this.vaultKey = vaultKey;
 		this.vaultPayload = payload;
@@ -463,6 +473,134 @@ export const OpenPGPUserStore = new class {
 		OpenPgpClientVault.validate(record.vault);
 		this.vaultRecord(record);
 		return record;
+	}
+
+	async persistVaultPasswordWrapper(vault, currentPassword) {
+		const current = this.vaultRecord();
+		if (!current) {
+			throw vaultRecoveryFailure('missing', 'No encryption vault is available to recover.');
+		}
+		OpenPgpClientVault.validate(vault);
+		await validateMailboxPublicKey(current.publicKey, this.vaultEmail);
+		if (JSON.stringify(vault.payload) !== JSON.stringify(current.vault.payload)) {
+			throw vaultRecoveryFailure('changed', 'Password recovery cannot change encrypted key material.');
+		}
+		const passwordWrapper = JSON.stringify(vault.wrappers.password);
+		const request = () => Remote.post('PgpClientVaultPasswordPut', null, {
+			Password: currentPassword,
+			passwordWrapper,
+			expectedRevision: current.revision
+		}, 15000);
+		let response;
+		try {
+			response = await request();
+		} catch (error) {
+			try {
+				response = await request();
+			} catch (retryError) {
+				throw vaultRecoveryFailure('uncertain',
+					'The server may already have updated the encryption vault.');
+			}
+		}
+		const record = response?.Result;
+		if (record?.conflict) {
+			throw vaultRecoveryFailure('conflict',
+				'The encrypted key vault changed in another session. Reload before trying again.');
+		}
+		if (record?.unavailable) {
+			throw vaultRecoveryFailure('current-unavailable',
+				'The current mailbox password could not be verified.');
+		}
+		if (record?.signInRequired) {
+			throw vaultRecoveryFailure('current-password',
+				'The current password does not match this signed-in mailbox.');
+		}
+		if (record?.recoveryRequired) {
+			throw vaultRecoveryFailure('uncertain',
+				'The server could not confirm the final encryption vault state.');
+		}
+		if (!record || true !== record.published || 'active' !== record.status
+			|| !Number.isInteger(record.revision) || current.revision + 1 !== record.revision
+			|| record.publicKey !== current.publicKey) {
+			throw vaultRecoveryFailure('save', 'The encryption vault was not updated.');
+		}
+		OpenPgpClientVault.validate(record.vault);
+		if (JSON.stringify(record.vault.payload) !== JSON.stringify(current.vault.payload)
+			|| JSON.stringify(record.vault.wrappers.password) !== passwordWrapper) {
+			throw vaultRecoveryFailure('changed', 'The encryption vault changed unexpectedly.');
+		}
+		this.vaultRecord(record);
+		return record;
+	}
+
+	async recoverVaultPassword(previousPassword, currentPassword) {
+		const record = this.vaultRecord();
+		if (!this.vaultEmail || !record) {
+			throw vaultRecoveryFailure('missing', 'No encryption vault is available to recover.');
+		}
+		let unlocked = null, complete = false;
+		try {
+			try {
+				unlocked = await OpenPgpClientVault.unlockWithPassword(
+					this.vaultEmail, record.vault, previousPassword
+				);
+			} catch (error) {
+				throw vaultRecoveryFailure('previous-password',
+					'The previous password could not unlock this encryption vault.');
+			}
+			try {
+				await this.validateVaultPayload(unlocked.payload, record.publicKey);
+			} catch (error) {
+				throw vaultRecoveryFailure('key-mismatch',
+					'The recovered private key does not match this mailbox.');
+			}
+
+			const vault = await OpenPgpClientVault.changePassword(
+				this.vaultEmail, record.vault, unlocked.vaultKey, currentPassword
+			), verified = await OpenPgpClientVault.unlockWithPassword(
+				this.vaultEmail, vault, currentPassword
+			);
+			try {
+				await this.validateVaultPayload(verified.payload, record.publicKey);
+				if (JSON.stringify(unlocked.payload) !== JSON.stringify(verified.payload)) {
+					throw Error('The recovered vault payload changed during password update.');
+				}
+			} finally {
+				verified.vaultKey.fill(0);
+			}
+
+			let saved;
+			try {
+				saved = await this.persistVaultPasswordWrapper(vault, currentPassword);
+			} catch (error) {
+				if ('uncertain' === error?.openPgpVaultRecovery) {
+					await OpenPgpClientVault.rememberOnDevice(
+						this.vaultEmail, unlocked.vaultKey
+					).catch(() => false);
+				}
+				throw error;
+			}
+			await OpenPgpClientVault.rememberOnDevice(this.vaultEmail, unlocked.vaultKey).catch(() => false);
+			try {
+				const privateKeys = await this.loadVaultPayload(
+					unlocked.payload, unlocked.vaultKey, saved.publicKey
+				);
+				complete = true;
+				return privateKeys;
+			} catch (error) {
+				this.lock();
+				this.vaultError('The encryption vault was updated, but this browser could not reload the key.');
+				throw vaultRecoveryFailure('local-load', this.vaultError());
+			}
+		} finally {
+			if (!complete && unlocked) {
+				unlocked.vaultKey.fill(0);
+				unlocked.payload?.privateKeys?.forEach(key => {
+					key.armor = '';
+					key.passphrase = '';
+				});
+			}
+		}
 	}
 
 	async createVault(loginPassword) {

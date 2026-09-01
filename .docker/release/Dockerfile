@@ -188,6 +188,9 @@ RUN chmod 755 \
 # Ship the private integration as a managed local plugin. The entrypoint copies
 # it into the persistent SnappyMail plugin directory without exposing secrets.
 COPY --chown=root:root plugins/rocksign /opt/snappymail-plugins/rocksign
+# Keep the production mailbox transport configuration under the same tracked
+# release contract even when SnappyMail's data directory is a persistent volume.
+COPY --chown=root:root deploy/snappymail-domains/boompay.ca.json /opt/snappymail-domains/boompay.ca.json
 RUN set -eux; \
     chown www-data:www-data /snappymail; \
     chmod 550 /snappymail; \

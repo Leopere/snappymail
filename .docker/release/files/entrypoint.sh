@@ -75,6 +75,43 @@ if [ ! -f "$SNAPPYMAIL_CONFIG_FILE" ]; then
     fi
 fi
 
+# Replace the managed BoomPay domain configuration atomically on every release.
+# Mailbox credentials remain in session storage; this file contains transport
+# hosts and TLS policy only.
+MANAGED_BOOMPAY_DOMAIN=/opt/snappymail-domains/boompay.ca.json
+if [ -f "$MANAGED_BOOMPAY_DOMAIN" ]; then
+    SNAPPYMAIL_DOMAIN_PARENT=/var/lib/snappymail/_data_/_default_
+    SNAPPYMAIL_DOMAIN_DIR=${SNAPPYMAIL_DOMAIN_PARENT}/domains
+    SNAPPYMAIL_BOOMPAY_DOMAIN=${SNAPPYMAIL_DOMAIN_DIR}/boompay.ca.json
+    if [ -L "$SNAPPYMAIL_DOMAIN_PARENT" ] || [ ! -d "$SNAPPYMAIL_DOMAIN_PARENT" ] \
+        || [ "$(readlink -f "$SNAPPYMAIL_DOMAIN_PARENT")" != "$SNAPPYMAIL_DOMAIN_PARENT" ]; then
+        echo "[ERROR] Refusing unsafe SnappyMail data directory" >&2
+        exit 1
+    fi
+    mkdir -p "$SNAPPYMAIL_DOMAIN_DIR"
+    if [ -L "$SNAPPYMAIL_DOMAIN_DIR" ] || [ ! -d "$SNAPPYMAIL_DOMAIN_DIR" ] \
+        || [ "$(readlink -f "$SNAPPYMAIL_DOMAIN_DIR")" != "$SNAPPYMAIL_DOMAIN_DIR" ]; then
+        echo "[ERROR] Refusing unsafe SnappyMail domain configuration directory" >&2
+        exit 1
+    fi
+    SNAPPYMAIL_DOMAIN_STAGE=$(mktemp -d /tmp/snappymail-managed-domain.XXXXXX)
+    cleanup_managed_domain_stage() {
+        if [ -n "${SNAPPYMAIL_DOMAIN_STAGE:-}" ]; then
+            rm -rf "$SNAPPYMAIL_DOMAIN_STAGE"
+        fi
+    }
+    trap cleanup_managed_domain_stage EXIT HUP INT TERM
+    cp "$MANAGED_BOOMPAY_DOMAIN" "$SNAPPYMAIL_DOMAIN_STAGE/boompay.ca.json"
+    chown www-data:www-data "$SNAPPYMAIL_DOMAIN_STAGE/boompay.ca.json"
+    chmod 750 "$SNAPPYMAIL_DOMAIN_DIR"
+    chmod 640 "$SNAPPYMAIL_DOMAIN_STAGE/boompay.ca.json"
+    chown www-data:www-data "$SNAPPYMAIL_DOMAIN_DIR"
+    mv -fT "$SNAPPYMAIL_DOMAIN_STAGE/boompay.ca.json" "$SNAPPYMAIL_BOOMPAY_DOMAIN"
+    rmdir "$SNAPPYMAIL_DOMAIN_STAGE"
+    SNAPPYMAIL_DOMAIN_STAGE=
+    trap - EXIT HUP INT TERM
+fi
+
 echo "[INFO] Overriding values in snappymail configuration: $SNAPPYMAIL_CONFIG_FILE"
 # Enable output of snappymail logs
 sed '/^\; Enable logging/{

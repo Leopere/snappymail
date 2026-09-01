@@ -110,10 +110,25 @@ local device wrapper.
 When a user changes their mailbox password and then signs in on a browser that
 already has the device wrapper, the browser opens the existing vault locally
 and silently rewraps it with the new password. The OpenPGP identity and old
-mail access are unchanged. If every existing browser has been erased before an
-external password change, no zero-knowledge system can silently recover the old
-vault without an additional recovery secret or a server-held decryption key;
-this deployment intentionally does neither.
+mail access are unchanged.
+
+If the device wrapper is unavailable but the user still knows the previous
+mailbox password, Settings > Security provides an explicit recovery form. The
+browser uses the previous password locally to unlock the existing vault. It
+then verifies that the private key, active fingerprint, and stored mailbox
+key still match. The current password must match the signed-in credential and
+pass a fresh IMAP login. The server accepts only a replacement password wrapper
+in that same request and preserves the payload ciphertext and public key byte
+for byte. Retrying the exact wrapper after an interrupted response returns the
+same committed revision without another write. A successful recovery
+republishes a quarantined WKD key without rotating it, so previously encrypted
+mail remains decryptable.
+
+The recovery form does not change the mailbox password. Mailbox passwords must
+still be changed through the account administrator or account portal. If every
+existing browser has been erased and the previous password is also unknown, no
+zero-knowledge system can recover the old vault without another recovery secret
+or a server-held decryption key; this deployment intentionally uses neither.
 
 Logout and automatic logout clear decrypted private keys, the raw vault key,
 and private-key passphrases from browser memory. The local device wrapper stays

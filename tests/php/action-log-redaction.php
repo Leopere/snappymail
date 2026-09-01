@@ -13,6 +13,7 @@ $input = [
 	'Action' => 'AdminPluginSettingsUpdate',
 	'XToken' => 'csrf-secret',
 	'migrationToken' => 'one-time-migration-token',
+	'passwordWrapper' => 'opaque-vault-password-wrapper',
 	'id' => 'rocksign',
 	'settings' => [
 		'api_token' => 'rocksign-secret',
@@ -43,6 +44,7 @@ $assert = static function (bool $condition, string $message) : void {
 
 $assert('*******' === $actual['XToken'], 'The CSRF token must be redacted.');
 $assert('*******' === $actual['migrationToken'], 'The one-time migration token must be redacted.');
+$assert('*******' === $actual['passwordWrapper'], 'The password-derived vault wrapper must be redacted.');
 $assert('*******' === $actual['settings']['api_token'], 'Nested API tokens must be redacted.');
 $assert('*******' === $actual['settings']['client-secret'], 'Nested secrets must be redacted.');
 $assert('*******' === $actual['settings']['rocksignApiKey'], 'API key spelling variants must be redacted.');
@@ -53,7 +55,7 @@ $assert('Visible' === $actual['settings']['nested'][0]['display_name'], 'Non-sen
 $assert('public-key-data' === $actual['settings']['public_key'], 'Public keys must not be treated as credentials.');
 $assert('template-1' === $actual['metadata']['template_id'], 'Non-sensitive metadata must remain visible.');
 
-foreach (['csrf-secret', 'one-time-migration-token', 'rocksign-secret', 'oauth-secret', 'api-key-secret', 'Bearer secret', 'mail-password', 'credential-one', 'credential-two'] as $secret) {
+foreach (['csrf-secret', 'one-time-migration-token', 'opaque-vault-password-wrapper', 'rocksign-secret', 'oauth-secret', 'api-key-secret', 'Bearer secret', 'mail-password', 'credential-one', 'credential-two'] as $secret) {
 	$assert(\in_array($secret, $secrets, true), "The logger masker did not receive {$secret}.");
 }
 $assert(!\in_array('Visible', $secrets, true), 'Non-sensitive values must not be registered as logger secrets.');

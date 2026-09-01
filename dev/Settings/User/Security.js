@@ -1,7 +1,9 @@
+import ko from 'ko';
+
 import { koComputable } from 'External/ko';
 
 import { SettingsGet } from 'Common/Globals';
-import { translateTrigger, relativeTime } from 'Common/Translator';
+import { i18n, translateTrigger, relativeTime } from 'Common/Translator';
 
 import { AbstractViewSettings } from 'Knoin/AbstractViews';
 
@@ -58,5 +60,62 @@ export class UserSettingsSecurity extends AbstractViewSettings {
 			pending: ['locked', 'missing'].includes(this.vaultState()),
 			unavailable: ['error', 'quarantined', 'unavailable'].includes(this.vaultState())
 		}));
+
+		this.vaultRecoveryPreviousPassword = ko.observable('');
+		this.vaultRecoveryCurrentPassword = ko.observable('');
+		this.vaultRecoveryCurrentPasswordConfirm = ko.observable('');
+		this.vaultRecoveryBusy = ko.observable(false);
+		this.vaultRecoveryError = ko.observable('');
+		this.vaultRecoverySuccess = ko.observable('');
+		this.vaultRecoveryAvailable = koComputable(() => {
+			const record = OpenPGPUserStore.vaultRecord(), state = this.vaultState();
+			return !!record && 'unavailable' !== state && OpenPGPUserStore.isSupported();
+		});
+	}
+
+	clearVaultRecoveryPasswords() {
+		this.vaultRecoveryPreviousPassword('');
+		this.vaultRecoveryCurrentPassword('');
+		this.vaultRecoveryCurrentPasswordConfirm('');
+	}
+
+	async recoverVaultPassword(form) {
+		if (this.vaultRecoveryBusy() || false === form?.reportValidity?.()) {
+			return;
+		}
+		this.vaultRecoveryError('');
+		this.vaultRecoverySuccess('');
+		if (this.vaultRecoveryCurrentPassword() !== this.vaultRecoveryCurrentPasswordConfirm()) {
+			this.vaultRecoveryError(i18n('SETTINGS_SECURITY/ERROR_VAULT_PASSWORD_MISMATCH'));
+			return;
+		}
+
+		this.vaultRecoveryBusy(true);
+		try {
+			await OpenPGPUserStore.recoverVaultPassword(
+				this.vaultRecoveryPreviousPassword(), this.vaultRecoveryCurrentPassword()
+			);
+			this.vaultRecoverySuccess(i18n('SETTINGS_SECURITY/VAULT_RECOVERY_SUCCESS'));
+		} catch (error) {
+			this.vaultRecoveryError(i18n('SETTINGS_SECURITY/' + ({
+				'previous-password': 'ERROR_VAULT_PREVIOUS_PASSWORD',
+				'current-password': 'ERROR_VAULT_CURRENT_PASSWORD',
+				'current-unavailable': 'ERROR_VAULT_CURRENT_UNAVAILABLE',
+				'conflict': 'ERROR_VAULT_CONFLICT',
+				'key-mismatch': 'ERROR_VAULT_KEY_MISMATCH',
+				'changed': 'ERROR_VAULT_KEY_MISMATCH',
+				'local-load': 'ERROR_VAULT_LOCAL_LOAD',
+				'uncertain': 'ERROR_VAULT_UNCERTAIN'
+			}[error?.openPgpVaultRecovery] || 'ERROR_VAULT_RECOVERY_FAILED')));
+		} finally {
+			this.clearVaultRecoveryPasswords();
+			this.vaultRecoveryBusy(false);
+		}
+	}
+
+	onHide() {
+		this.clearVaultRecoveryPasswords();
+		this.vaultRecoveryError('');
+		this.vaultRecoverySuccess('');
 	}
 }

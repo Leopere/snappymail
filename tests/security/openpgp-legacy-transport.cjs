@@ -12,6 +12,13 @@ const migrationSource = fs.readFileSync(path.join(root, 'dev/Storage/OpenPgpLega
 	.replace("import { OpenPgpClientVault } from 'Storage/OpenPgpVault';", 'const OpenPgpClientVault = window.OpenPgpClientVault;')
 	.replace('export const createLegacyTransport =', 'window.createLegacyTransport =')
 	.replace('export const migrateLegacyExport =', 'window.migrateLegacyExport =');
+const browserExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+	|| [
+		'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+		'/Applications/Chromium.app/Contents/MacOS/Chromium',
+		'/usr/bin/google-chrome',
+		'/usr/bin/chromium'
+	].find(candidate => fs.existsSync(candidate));
 
 (async () => {
 	if (0 !== spawnSync('gpg', ['--version'], { stdio: 'ignore' }).status) {
@@ -19,7 +26,10 @@ const migrationSource = fs.readFileSync(path.join(root, 'dev/Storage/OpenPgpLega
 	}
 
 	const temporaryHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-legacy-transport-')),
-		browser = await chromium.launch({ headless: true });
+		browser = await chromium.launch({
+			headless: true,
+			...(browserExecutable ? { executablePath: browserExecutable } : {})
+		});
 	try {
 		const context = await browser.newContext({ ignoreHTTPSErrors: true });
 		await context.route('https://legacy-transport.test/', route => route.fulfill({

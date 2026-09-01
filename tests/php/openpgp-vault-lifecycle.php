@@ -14,6 +14,18 @@ namespace MailSo\Base {
 	}
 }
 
+namespace MailSo\Imap {
+	class ImapClient
+	{
+		public function SetLogger($logger) : void {}
+		public function Disconnect() : void {}
+	}
+}
+
+namespace MailSo\Imap\Exceptions {
+	class LoginBadCredentialsException extends \RuntimeException {}
+}
+
 namespace RainLoop {
 	abstract class Utils
 	{
@@ -24,8 +36,12 @@ namespace RainLoop {
 namespace RainLoop\Model {
 	class Account
 	{
-		public function __construct(private string $email) {}
+		public function __construct(
+			private string $email,
+			private string $password = 'current-mailbox-password'
+		) {}
 		public function Email() : string { return $this->email; }
+		public function IncPassword() : string { return $this->password; }
 	}
 	class MainAccount extends Account {}
 	class AdditionalAccount extends Account
@@ -95,9 +111,25 @@ namespace RainLoop\Actions {
 	{
 		use Pgp;
 		public array $params = [];
+		public bool $imapProbeSucceeds = true;
+		public bool $imapProbeUnavailable = false;
+		public int $imapProbeCalls = 0;
+		public int $loginDelayCalls = 0;
 		public function __construct(private \RainLoop\Model\Account $account, private VaultLifecycleStorage $storage) {}
 		protected function getAccountFromToken(bool $throw = true) { return $this->account; }
 		public function StorageProvider() : VaultLifecycleStorage { return $this->storage; }
+		public function Logger() { return null; }
+		protected function imapConnect($account, bool $authLog = false, $client = null, ?int $timeout = null) : void
+		{
+			$this->imapProbeCalls++;
+			if ($this->imapProbeUnavailable) throw new \RuntimeException('IMAP unavailable');
+			if (!$this->imapProbeSucceeds) {
+				throw new \RuntimeException(
+					'IMAP credential rejected', 0, new \MailSo\Imap\Exceptions\LoginBadCredentialsException()
+				);
+			}
+		}
+		protected function loginErrorDelay() : void { $this->loginDelayCalls++; }
 		protected function GetActionParam(string $name, $default = null) { return $this->params[$name] ?? $default; }
 		protected function DefaultResponse($result) : array { return ['Result' => $result]; }
 		protected function FalseResponse() : array { return ['Result' => false]; }
@@ -164,6 +196,41 @@ PGP;
 	$account = new \RainLoop\Model\Account($email);
 	$actions = new \RainLoop\Actions\VaultLifecycleActions($account, $storage);
 	$assert(\SnappyMail\PGP\Wkd::publish($email, $publicKey), 'Lifecycle fixture WKD publication failed.');
+	$passwordWrapperJson = \json_encode($vault['wrappers']['password'], JSON_UNESCAPED_SLASHES);
+	$actions->params = [
+		'expectedRevision' => 99,
+		'Password' => 'current-mailbox-password',
+		'passwordWrapper' => $passwordWrapperJson
+	];
+	$passwordPut = $actions->DoPgpClientVaultPasswordPut()['Result'];
+	$assert(true === $passwordPut['conflict'] && 0 === $actions->imapProbeCalls,
+		'A stale vault revision must not start a mailbox-password probe.');
+	$actions->params = [
+		'expectedRevision' => 1,
+		'Password' => 'wrong-mailbox-password',
+		'passwordWrapper' => $passwordWrapperJson
+	];
+	$passwordPut = $actions->DoPgpClientVaultPasswordPut()['Result'];
+	$assert(false === $passwordPut['valid'] && true === $passwordPut['signInRequired']
+		&& 0 === $actions->imapProbeCalls && 1 === $actions->loginDelayCalls,
+		'A candidate that differs from the signed-in credential must be delayed and must not reach IMAP.');
+	$actions->imapProbeSucceeds = false;
+	$actions->params = [
+		'expectedRevision' => 1,
+		'Password' => 'current-mailbox-password',
+		'passwordWrapper' => $passwordWrapperJson
+	];
+	$passwordPut = $actions->DoPgpClientVaultPasswordPut()['Result'];
+	$assert(false === $passwordPut['valid'] && true === $passwordPut['signInRequired']
+		&& 1 === $actions->imapProbeCalls && 2 === $actions->loginDelayCalls,
+		'A stale signed-in credential must fail when a fresh IMAP login rejects it.');
+	$actions->imapProbeSucceeds = true;
+	$actions->imapProbeUnavailable = true;
+	$passwordPut = $actions->DoPgpClientVaultPasswordPut()['Result'];
+	$assert(false === $passwordPut['valid'] && true === $passwordPut['unavailable']
+		&& 2 === $actions->imapProbeCalls && 2 === $actions->loginDelayCalls,
+		'A mailbox transport failure must not be misreported as a wrong current password.');
+	$actions->imapProbeUnavailable = false;
 
 	$actions->params = ['expectedRevision' => 1];
 	$quarantined = $actions->DoPgpClientVaultQuarantine()['Result'];
@@ -200,6 +267,43 @@ PGP;
 	\rmdir($rollbackManifest);
 	$assert(\SnappyMail\PGP\Wkd::publish($email, $publicKey),
 		'Lifecycle fixture must republish after the forced quarantine rollback failure.');
+	$newWrapper = $vault['wrappers']['password'];
+	$newWrapper['kdf']['salt'] = \rtrim(\strtr(\base64_encode(\str_repeat('y', 16)), '+/', '-_'), '=');
+	$actions->params = [
+		'expectedRevision' => 3,
+		'Password' => 'current-mailbox-password',
+		'passwordWrapper' => \json_encode($newWrapper, JSON_UNESCAPED_SLASHES)
+	];
+	$rewrapped = $actions->DoPgpClientVaultPasswordPut()['Result'];
+	$assert(4 === $rewrapped['revision'] && 'active' === $rewrapped['status']
+		&& true === $rewrapped['published'] && false === $rewrapped['quarantined'],
+		'Password recovery must activate and publish one new vault revision.');
+	$assert(3 === $actions->imapProbeCalls,
+		'The wrapper mutation must perform its own successful fresh IMAP proof.');
+	$assert($vault['payload'] === $rewrapped['vault']['payload']
+		&& $publicKey === $rewrapped['publicKey']
+		&& $newWrapper === $rewrapped['vault']['wrappers']['password'],
+		'A password-wrapper update must preserve payload ciphertext and public-key bytes exactly.');
+	$rewrappedRaw = $storage->values['.openpgp-client-vault'];
+	$idempotent = $actions->DoPgpClientVaultPasswordPut()['Result'];
+	$assert(4 === $idempotent['revision'] && true === $idempotent['published']
+		&& $rewrappedRaw === $storage->values['.openpgp-client-vault']
+		&& 4 === $actions->imapProbeCalls,
+		'Retrying the exact wrapper after a lost response must return the committed revision without another write.');
+	$otherWrapper = $newWrapper;
+	$otherWrapper['kdf']['salt'] = \rtrim(\strtr(\base64_encode(\str_repeat('z', 16)), '+/', '-_'), '=');
+	$actions->params = [
+		'expectedRevision' => 3,
+		'Password' => 'current-mailbox-password',
+		'passwordWrapper' => \json_encode($otherWrapper, JSON_UNESCAPED_SLASHES)
+	];
+	$assert(true === $actions->DoPgpClientVaultPasswordPut()['Result']['conflict']
+		&& $rewrappedRaw === $storage->values['.openpgp-client-vault'],
+		'A stale password-wrapper update must not change the current vault.');
+	$actions->params = ['expectedRevision' => 4, 'passwordWrapper' => '{"malformed":true}'];
+	$assert(false === $actions->DoPgpClientVaultPasswordPut()['Result']
+		&& $rewrappedRaw === $storage->values['.openpgp-client-vault'],
+		'A malformed password wrapper must not alter the existing vault.');
 
 	$storage->Clear($account, \RainLoop\Providers\Storage\Enumerations\StorageType::ROOT, '.openpgp-client-vault');
 	$storage->values['.gnupg-passphrases'] = 'legacy-state-must-survive';

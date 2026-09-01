@@ -51,6 +51,15 @@ trait Pgp
 			&& $this->clientVaultCipher($wrapper['cipher']);
 	}
 
+	private function clientVaultPasswordWrapper($value) : ?array
+	{
+		if (!\is_string($value) || 64 * 1024 < \strlen($value)) {
+			return null;
+		}
+		$wrapper = \json_decode($value, true);
+		return $this->clientVaultWrapper($wrapper) ? $wrapper : null;
+	}
+
 	private function clientVault($value) : ?array
 	{
 		if (!\is_string($value) || 2 * 1024 * 1024 < \strlen($value)
@@ -352,6 +361,102 @@ trait Pgp
 	public function DoPgpClientVaultPut() : array
 	{
 		return Wkd::transaction(fn() : array => $this->clientVaultPutTransaction());
+	}
+
+	/** Verify the current credential, then replace only the password wrapper. */
+	public function DoPgpClientVaultPasswordPut() : array
+	{
+		$account = $this->getAccountFromToken(false);
+		$wrapper = $this->clientVaultPasswordWrapper($this->GetActionParam('passwordWrapper', ''));
+		$current = $account ? $this->clientVaultRecord($account) : null;
+		$expectedRevision = (int) $this->GetActionParam('expectedRevision', 0);
+		if (!$account || !$wrapper || !$current) {
+			$this->logWrite('Rejected malformed browser OpenPGP password-wrapper update.', \LOG_WARNING, 'OpenPGP');
+			return $this->FalseResponse();
+		}
+		$currentRevision = (int) $current['revision'];
+		$alreadyApplied = $currentRevision === $expectedRevision + 1
+			&& 'active' === $current['status']
+			&& $current['vault']['wrappers']['password'] === $wrapper;
+		if ($currentRevision !== $expectedRevision && !$alreadyApplied) {
+			return $this->DefaultResponse(['conflict' => true, 'revision' => $currentRevision]);
+		}
+		$password = (string) $this->GetActionParam('Password', '');
+		if ('' === $password || !\hash_equals($account->IncPassword(), $password)) {
+			$this->loginErrorDelay();
+			return $this->DefaultResponse(['valid' => false, 'signInRequired' => true]);
+		}
+
+		$imap = new \MailSo\Imap\ImapClient();
+		$imap->SetLogger($this->Logger());
+		try {
+			$this->imapConnect($account, false, $imap, 8);
+		} catch (\Throwable $error) {
+			if ($error->getPrevious() instanceof \MailSo\Imap\Exceptions\LoginBadCredentialsException) {
+				$this->loginErrorDelay();
+				return $this->DefaultResponse(['valid' => false, 'signInRequired' => true]);
+			}
+			return $this->DefaultResponse(['valid' => false, 'unavailable' => true]);
+		} finally {
+			try {
+				$imap->Disconnect();
+			} catch (\Throwable $error) {
+			}
+		}
+
+		return Wkd::transaction(fn() : array => $this->clientVaultPasswordPutTransaction(
+			$account, $wrapper, $expectedRevision
+		));
+	}
+
+	private function clientVaultPasswordPutTransaction(
+		\RainLoop\Model\Account $account,
+		array $wrapper,
+		int $expectedRevision
+	) : array
+	{
+		if (!$this->ensureClientVaultStorageOwner($account)) {
+			return $this->FalseResponse();
+		}
+		$current = $this->clientVaultRecord($account);
+		if (!$current) {
+			return $this->FalseResponse();
+		}
+		$currentRevision = (int) $current['revision'];
+		if ($currentRevision === $expectedRevision + 1
+			&& 'active' === $current['status']
+			&& $current['vault']['wrappers']['password'] === $wrapper) {
+			$published = $this->clientVaultPublicKeyPublished($account, $current['publicKey']);
+			return $published
+				? $this->DefaultResponse($current + ['published' => true, 'quarantined' => false])
+				: $this->DefaultResponse(['recoveryRequired' => true]);
+		}
+		if ($currentRevision !== $expectedRevision) {
+			return $this->DefaultResponse(['conflict' => true, 'revision' => $currentRevision]);
+		}
+
+		$previous = $this->clientVaultRaw($account);
+		$record = $current;
+		$record['revision'] = $currentRevision + 1;
+		$record['status'] = 'active';
+		$record['vault']['wrappers']['password'] = $wrapper;
+		if (!$this->storeClientVaultRecord($account, $record)) {
+			$this->logWrite('Unable to persist browser OpenPGP password-wrapper update.', \LOG_WARNING, 'OpenPGP');
+			return $this->FalseResponse();
+		}
+		if (!$this->clientVaultPublicKeyPublished($account, $record['publicKey'])) {
+			$restored = $this->restoreClientVaultRecord($account, $previous);
+			$this->logWrite(
+				'Browser OpenPGP password-wrapper update rejected because WKD publication failed'
+					. ($restored ? '; previous vault restored.' : '; previous vault restoration failed.'),
+				$restored ? \LOG_WARNING : \LOG_ERR,
+				'OpenPGP'
+			);
+			return $restored
+				? $this->FalseResponse()
+				: $this->DefaultResponse(['recoveryRequired' => true]);
+		}
+		return $this->DefaultResponse($record + ['published' => true, 'quarantined' => false]);
 	}
 
 	private function clientVaultPutTransaction() : array

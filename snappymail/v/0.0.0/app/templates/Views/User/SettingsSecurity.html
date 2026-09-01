@@ -39,3 +39,39 @@
 	</div>
 	<div class="encryption-state" data-bind="text: encryptionStatus"></div>
 </div>
+
+<div class="vault-recovery form-horizontal" style="display:none" data-bind="visible: vaultRecoveryAvailable">
+	<div class="legend" data-i18n="SETTINGS_SECURITY/RECOVER_VAULT_TITLE"></div>
+	<div class="vault-recovery-description" data-i18n="SETTINGS_SECURITY/RECOVER_VAULT_DESCRIPTION"></div>
+	<form data-bind="submit: recoverVaultPassword">
+		<div class="control-group">
+			<label for="vault-recovery-previous" data-i18n="SETTINGS_SECURITY/LABEL_VAULT_PREVIOUS_PASSWORD"></label>
+			<div>
+				<input id="vault-recovery-previous" type="password" class="span6" autocomplete="off" required
+					data-bind="textInput: vaultRecoveryPreviousPassword">
+			</div>
+		</div>
+		<div class="control-group">
+			<label for="vault-recovery-current" data-i18n="SETTINGS_SECURITY/LABEL_VAULT_CURRENT_PASSWORD"></label>
+			<div>
+				<input id="vault-recovery-current" type="password" class="span6" autocomplete="current-password" required
+					data-bind="textInput: vaultRecoveryCurrentPassword">
+			</div>
+		</div>
+		<div class="control-group">
+			<label for="vault-recovery-confirm" data-i18n="SETTINGS_SECURITY/LABEL_VAULT_CURRENT_PASSWORD_CONFIRM"></label>
+			<div>
+				<input id="vault-recovery-confirm" type="password" class="span6" autocomplete="current-password" required
+					data-bind="textInput: vaultRecoveryCurrentPasswordConfirm">
+			</div>
+		</div>
+		<div class="control-group">
+			<label></label>
+			<div>
+				<button class="btn" type="submit" data-bind="disable: vaultRecoveryBusy" data-i18n="SETTINGS_SECURITY/BUTTON_VAULT_RECOVERY_UPDATE"></button>
+			</div>
+		</div>
+		<div class="vault-recovery-alert alert alert-error" role="alert" data-bind="visible: vaultRecoveryError, text: vaultRecoveryError"></div>
+		<div class="vault-recovery-alert alert alert-success" role="alert" data-bind="visible: vaultRecoverySuccess, text: vaultRecoverySuccess"></div>
+	</form>
+</div>
