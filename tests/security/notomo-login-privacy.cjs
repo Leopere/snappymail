@@ -11,7 +11,7 @@ const branding = read('snappymail/v/0.0.0/app/libraries/snappymail/branding.php'
 const api = read('snappymail/v/0.0.0/app/libraries/RainLoop/Api.php');
 const csp = read('snappymail/v/0.0.0/app/libraries/snappymail/http/csp.php');
 const boot = read('dev/boot.js');
-const reporter = boot.slice(boot.indexOf('installNotomoErrorReporter'), boot.indexOf('\n\t};\n\ntry {'));
+const reporter = boot.slice(boot.indexOf('installNotomoErrorReporter'), boot.indexOf('installBugReportWidget'));
 
 assert.match(branding, /'mail\.boompay\.ca' => 'boompay\.ca'/,
 	'the canonical BoomPay mail host must report under the boompay.ca Notomo site.');
@@ -26,6 +26,8 @@ assert.match(boot, /const siteId = !admin && appData\.Brand\?\.notomoSiteId/,
 	'telemetry must cover authenticated and unauthenticated user shells, but not admin.');
 assert.match(boot, /endpoint = 'https:\/\/notomo\.colinknapp\.com\/collect'/,
 	'webmail must send only local error reports to the Notomo collector.');
+assert.match(boot, /bugEndpoint = 'https:\/\/notomo\.colinknapp\.com\/bug-report'/,
+	'visitor reports must use Notomo\'s dedicated, token-bound endpoint.');
 assert.doesNotMatch(boot, /notomo\.colinknapp\.com\/n\.js|n-rrweb|n-config/,
 	'webmail must never load remote Notomo code, configuration, or replay assets.');
 assert.match(boot, /credentials: 'omit'/,
@@ -34,6 +36,22 @@ assert.match(boot, /referrerPolicy: 'no-referrer'/,
 	'error reports must not leak the webmail URL in a referrer.');
 assert.match(boot, /seen\.size >= 25/,
 	'error reporting must have a bounded per-page budget.');
+assert.match(boot, /bug_report_enabled: true/,
+	'the privacy-minimal pageview must explicitly opt in to a bug-report token.');
+assert.match(boot, /bug_report_token: token/,
+	'manual reports must present the collector-issued session token.');
+assert.match(boot, /replay_active: false/,
+	'webmail must explicitly declare that no replay is attached.');
+assert.match(boot, /\(\?=\.\*\[A-Za-z0-9\]\)\[A-Za-z0-9 \.\-\]\+/,
+	'manual report text must be limited to letters, numbers, spaces, periods, and dashes.');
+assert.match(boot, /text\.length > 200/,
+	'manual reports must be capped at 200 characters before transmission.');
+assert.match(boot, /path: '\/webmail'/,
+	'token pageviews must use a fixed non-sensitive path.');
+assert.match(boot, /return '\/message'/,
+	'optional report paths must reduce message routes to a coarse category.');
+assert.doesNotMatch(boot, /path:\s*doc\.location\.(?:pathname|hash|search)/,
+	'raw application routes must never enter report payloads.');
 for (const sensitiveField of ['message:', 'stack:', 'title:', 'referrer:', 'document_uri:', 'request_url:']) {
 	assert.ok(!reporter.includes(sensitiveField), `error reports must exclude ${sensitiveField}`);
 }

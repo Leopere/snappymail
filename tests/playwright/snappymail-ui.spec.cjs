@@ -110,17 +110,112 @@ test('public and authenticated user shells report errors without leaking page se
 	}[screenshotHost];
 	test.skip(!siteId, 'Notomo is enabled only on the public branded hosts.');
 
-	const requests = [], reports = [];
+	const requests = [], reports = [], bugReports = [];
+	const parsePayload = body => {
+		try {
+			return JSON.parse(body);
+		} catch (e) {
+			return null;
+		}
+	};
+	const collectPayloads = () => reports.map(parsePayload).filter(Boolean);
 	page.on('request', request => requests.push(request.url()));
-	await page.route('https://notomo.colinknapp.com/collect', route => {
-		reports.push(route.request().postData());
+
+	await page.route('https://notomo.colinknapp.com/collect', async route => {
+		if (route.request().method() === 'OPTIONS') {
+			return route.fulfill({
+				status: 204,
+				headers: {
+					'Access-Control-Allow-Origin': baseURL,
+					'Access-Control-Allow-Methods': 'POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type'
+				}
+			});
+		}
+		const data = route.request().postData() || '';
+		reports.push(data);
+		const payload = parsePayload(data);
+		if (payload?.kind === 'pageview' && payload?.bug_report_enabled) {
+			return route.fulfill({
+				status: 204,
+				headers: {
+					'Access-Control-Allow-Origin': '*',
+					'X-Notomo-Bug-Report-Token': 'test-token',
+					'Access-Control-Expose-Headers': 'X-Notomo-Bug-Report-Token'
+				}
+			});
+		}
 		return route.fulfill({status: 204, headers: {'Access-Control-Allow-Origin': '*'}});
 	});
+
+	await page.route('https://notomo.colinknapp.com/bug-report', route => {
+		if (route.request().method() === 'OPTIONS') {
+			return route.fulfill({
+				status: 204,
+				headers: {
+					'Access-Control-Allow-Origin': baseURL,
+					'Access-Control-Allow-Methods': 'POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type'
+				}
+			});
+		}
+		bugReports.push(route.request().postData() || '');
+		return route.fulfill({status: 204, headers: {'Access-Control-Allow-Origin': '*'}});
+	});
+
 	const loginURL = new URL(baseURL);
 	loginURL.searchParams.set('utm_source', 'snappymail-test');
 	loginURL.searchParams.set('utm_campaign', 'login-privacy');
 
 	await page.goto(loginURL.href, { waitUntil: 'commit', timeout: 45000 });
+	await expect.poll(() => collectPayloads().some(payload =>
+		payload.kind === 'pageview' && payload.bug_report_enabled === true
+	)).toBe(true);
+
+	const reportBugControl = page.getByRole('button', {name: 'Report a bug'});
+	await expect(reportBugControl).toBeVisible();
+	await reportBugControl.click();
+	const reportInput = page.getByLabel('Bug report'),
+		reportSubmit = page.getByRole('button', {name: 'Send report'}),
+		includePath = page.getByLabel('Include current screen'),
+		reportStatus = page.getByRole('status');
+	await expect(reportInput).toBeVisible();
+	await expect(reportSubmit).toBeVisible();
+	await expect(page.getByText('(Path: not included)')).toBeVisible();
+
+	await reportInput.fill('SNAPPYMAIL-INVALID/1');
+	await reportSubmit.click();
+	expect(bugReports).toHaveLength(0);
+	await expect(reportStatus).toHaveText('Use only letters, numbers, spaces, periods, and dashes.');
+
+	await reportInput.evaluate(input => input.value = 'x'.repeat(201));
+	await reportSubmit.click();
+	expect(bugReports).toHaveLength(0);
+	await expect(reportStatus).toHaveText('Keep the report to 200 characters.');
+
+	await reportInput.fill('Mail view does not open.');
+	await includePath.check();
+	await expect(page.getByText('(Path: /login)')).toBeVisible();
+	await reportSubmit.click();
+	await expect.poll(() => bugReports.length).toBe(1);
+	const bugReportPayload = JSON.parse(bugReports[0]);
+	const bugReportText = JSON.stringify(bugReportPayload);
+	expect(bugReportPayload).toMatchObject({
+		kind: 'bug_report',
+		site_id: siteId,
+		replay_active: false,
+		bug_report_token: 'test-token',
+		bug_report: 'Mail view does not open.',
+		path_included: true,
+		path: '/login',
+		referrer: '',
+		title: ''
+	});
+	expect(bugReportText).not.toContain(loginURL.search);
+	expect(bugReportText).not.toContain('#');
+	expect(bugReportText).not.toContain('SNAPPYMAIL-INVALID/1');
+	await expect(page.getByText('Bug reported')).toBeVisible();
+
 	await expect(page.locator('input[name=Email]')).toBeVisible();
 	const sentinel = 'SNAPPYMAIL-PRIVATE-987654';
 	await page.locator('input[name=Password]').fill(sentinel);
@@ -128,10 +223,12 @@ test('public and authenticated user shells report errors without leaking page se
 		document.title = value;
 		console.error(new Error(value));
 	}, sentinel);
-	await expect.poll(() => reports.length).toBe(1);
-	const reportText = reports.join('');
+	await expect.poll(() => collectPayloads().some(payload => payload.kind === 'error' && payload.event_name === 'console_error')).toBe(true);
+	const consoleErrorReports = collectPayloads().filter(payload => payload.kind === 'error' && payload.event_name === 'console_error');
+	const reportText = JSON.stringify(consoleErrorReports);
+	expect(consoleErrorReports.length).toBeGreaterThan(0);
 	expect(reportText).not.toContain(sentinel);
-	expect(JSON.parse(reports[0])).toMatchObject({
+	expect(consoleErrorReports[0]).toMatchObject({
 		site_id: siteId,
 		kind: 'error',
 		event_name: 'console_error',
@@ -160,11 +257,11 @@ test('public and authenticated user shells report errors without leaking page se
 			message: value
 		}));
 	}, authenticatedSentinel);
-	await expect.poll(() => reports.map(JSON.parse).some(report =>
+	await expect.poll(() => collectPayloads().some(report =>
 		report.event_name === 'error' && report.event_data?.lineno === 17 && report.event_data?.colno === 23
 	)).toBe(true);
-	expect(reports.join('')).not.toContain(authenticatedSentinel);
-	const authenticatedReport = reports.map(JSON.parse).find(report =>
+	expect(JSON.stringify(collectPayloads())).not.toContain(authenticatedSentinel);
+	const authenticatedReport = collectPayloads().find(report =>
 		report.event_name === 'error' && report.event_data?.lineno === 17 && report.event_data?.colno === 23
 	);
 	expect(authenticatedReport).toMatchObject({
