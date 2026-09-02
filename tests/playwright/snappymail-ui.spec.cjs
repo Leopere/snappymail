@@ -9,11 +9,15 @@ const secondaryEmail = process.env.SNAPPYMAIL_SECONDARY_EMAIL || 'teammate@examp
 const secondaryPassword = process.env.SNAPPYMAIL_SECONDARY_PASSWORD || password;
 const screenshotDir = path.resolve(__dirname, '../../tmp/playwright');
 const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '';
+const hostResolverRules = process.env.PLAYWRIGHT_HOST_RESOLVER_RULES || '';
 const screenshotHost = new URL(baseURL).hostname.replace(/[^a-z0-9.-]+/gi, '-');
 
 test.use({
 	baseURL,
-	launchOptions: chromiumExecutable ? { executablePath: chromiumExecutable } : {}
+	launchOptions: {
+		...(chromiumExecutable ? {executablePath: chromiumExecutable} : {}),
+		...(hostResolverRules ? {args: [`--host-resolver-rules=${hostResolverRules}`]} : {})
+	}
 });
 
 const login = async (page, accountEmail = email, accountPassword = password) => {
@@ -98,7 +102,7 @@ test.beforeAll(() => {
 	fs.mkdirSync(screenshotDir, { recursive: true });
 });
 
-test('public login shell sends one privacy-safe Notomo pageview', async ({ page }) => {
+test('public and authenticated user shells report errors without leaking page secrets', async ({ page }) => {
 	const siteId = {
 		'boompay.ca': 'boompay.ca',
 		'mail.boompay.ca': 'boompay.ca',
@@ -106,26 +110,75 @@ test('public login shell sends one privacy-safe Notomo pageview', async ({ page 
 	}[screenshotHost];
 	test.skip(!siteId, 'Notomo is enabled only on the public branded hosts.');
 
-	const requests = [];
+	const requests = [], reports = [];
 	page.on('request', request => requests.push(request.url()));
+	await page.route('https://notomo.colinknapp.com/collect', route => {
+		reports.push(route.request().postData());
+		return route.fulfill({status: 204, headers: {'Access-Control-Allow-Origin': '*'}});
+	});
 	const loginURL = new URL(baseURL);
 	loginURL.searchParams.set('utm_source', 'snappymail-test');
 	loginURL.searchParams.set('utm_campaign', 'login-privacy');
-	const pixelResponse = page.waitForResponse(response =>
-		'https://notomo.colinknapp.com/n.gif' === new URL(response.url()).origin
-			+ new URL(response.url()).pathname
-	, { timeout: 15000 });
 
 	await page.goto(loginURL.href, { waitUntil: 'commit', timeout: 45000 });
 	await expect(page.locator('input[name=Email]')).toBeVisible();
-	const response = await pixelResponse,
-		pixel = new URL(response.url());
-	expect(response.status()).toBe(200);
-	expect(pixel.searchParams.get('s')).toBe(siteId);
-	expect(pixel.searchParams.get('u')).toBe(loginURL.origin + loginURL.pathname);
-	expect(pixel.searchParams.get('utm_source')).toBe('snappymail-test');
-	expect(pixel.searchParams.get('utm_campaign')).toBe('login-privacy');
-	expect(requests.some(url => url.includes('notomo.colinknapp.com/n.js'))).toBe(false);
+	const sentinel = 'SNAPPYMAIL-PRIVATE-987654';
+	await page.locator('input[name=Password]').fill(sentinel);
+	await page.evaluate(value => {
+		document.title = value;
+		console.error(new Error(value));
+	}, sentinel);
+	await expect.poll(() => reports.length).toBe(1);
+	const reportText = reports.join('');
+	expect(reportText).not.toContain(sentinel);
+	expect(JSON.parse(reports[0])).toMatchObject({
+		site_id: siteId,
+		kind: 'error',
+		event_name: 'console_error',
+		event_data: {
+			type: 'console_error',
+			name: 'Error',
+			source: '',
+			lineno: 0,
+			colno: 0
+		}
+	});
+	expect(requests.some(url => /notomo\.colinknapp\.com\/(?:n\.js|n-config|n-rrweb)/.test(url))).toBe(false);
+
+	await login(page);
+	const authenticatedSentinel = 'SNAPPYMAIL-AUTHENTICATED-PRIVATE-246810';
+	await page.evaluate(value => {
+		document.title = value;
+		const privateValue = document.createElement('input');
+		privateValue.value = value;
+		document.body.append(privateValue);
+		dispatchEvent(new ErrorEvent('error', {
+			error: new Error(value),
+			filename: `${location.origin}/private/${value}`,
+			lineno: 17,
+			colno: 23,
+			message: value
+		}));
+	}, authenticatedSentinel);
+	await expect.poll(() => reports.map(JSON.parse).some(report =>
+		report.event_name === 'error' && report.event_data?.lineno === 17 && report.event_data?.colno === 23
+	)).toBe(true);
+	expect(reports.join('')).not.toContain(authenticatedSentinel);
+	const authenticatedReport = reports.map(JSON.parse).find(report =>
+		report.event_name === 'error' && report.event_data?.lineno === 17 && report.event_data?.colno === 23
+	);
+	expect(authenticatedReport).toMatchObject({
+		site_id: siteId,
+		kind: 'error',
+		event_name: 'error',
+		event_data: {
+			type: 'error',
+			name: 'Error',
+			source: '',
+			lineno: 17,
+			colno: 23
+		}
+	});
 });
 
 test('public boot survives two consecutive transport aborts', async ({ page }) => {

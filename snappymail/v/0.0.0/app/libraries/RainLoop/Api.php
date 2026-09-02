@@ -54,7 +54,7 @@ abstract class Api
 			$CSP->add('img-src', 'http:');
 		}
 		if (\SnappyMail\Branding::notomoSiteId()) {
-			$CSP->add('img-src', 'https://notomo.colinknapp.com');
+			$CSP->add('connect-src', 'https://notomo.colinknapp.com');
 		}
 		if ($sScriptNonce) {
 			$CSP->add('script-src', "'nonce-{$sScriptNonce}'");

@@ -27,41 +27,94 @@ const
 			doc.head.append(script);
 		}) : Promise.reject('src is empty'),
 
-	trackLoginPage = appData => {
-		const siteId = !admin && !appData.Auth && appData.Brand?.notomoSiteId;
+	installNotomoErrorReporter = appData => {
+		const siteId = !admin && appData.Brand?.notomoSiteId;
 		if (!siteId) {
 			return;
 		}
-
-		const page = new URL(doc.location.href),
-			pixel = new URL('https://notomo.colinknapp.com/n.gif'),
-			params = page.searchParams,
-			image = doc.createElement('img');
-		pixel.searchParams.set('s', siteId);
-		pixel.searchParams.set('u', page.origin + page.pathname);
-		pixel.searchParams.set('p', page.pathname);
-		pixel.searchParams.set('t', appData.title || '');
-		pixel.searchParams.set('w', screen.width);
-		pixel.searchParams.set('h', screen.height);
-		['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(name => {
-			const value = params.get(name);
-			value && pixel.searchParams.set(name, value.slice(0, 200));
-		});
-		try {
-			const referrer = new URL(doc.referrer);
-			referrer.origin !== page.origin && pixel.searchParams.set('r', referrer.origin + '/');
-		} catch (e) {
-			// No usable external referrer.
+		if (window.__snappyMailNotomoReporter) {
+			return;
 		}
 
-		image.alt = '';
-		image.width = image.height = 1;
-		image.hidden = true;
-		image.referrerPolicy = 'no-referrer';
-		image.addEventListener('load', () => image.remove(), {once: true});
-		image.addEventListener('error', () => image.remove(), {once: true});
-		image.src = pixel;
-		doc.body.append(image);
+		const endpoint = 'https://notomo.colinknapp.com/collect',
+			nativeFetch = fetch.bind(window),
+			sessionId = crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)),
+				value => value.toString(16).padStart(2, '0')).join(''),
+			seen = new Map(),
+			allowedNames = new Set([
+				'Error', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'URIError'
+			]),
+			sourceKind = value => {
+				if (!value) {
+					return '';
+				}
+				try {
+					const url = new URL(value, doc.location.href),
+						match = url.origin === doc.location.origin && url.pathname.match(
+							/\/static\/js\/(?:min\/)?(admin|app|boot|libs|openpgp|serviceworker|sieve)(?:\.min)?\.js$/
+						);
+					return match ? match[1] : '';
+				} catch (e) {
+					return '';
+				}
+			},
+			report = (eventName, details = {}) => {
+				const eventData = {
+					type: eventName,
+					name: allowedNames.has(details.name) ? details.name : 'Error',
+					source: sourceKind(details.source),
+					lineno: Number.isSafeInteger(details.lineno) ? details.lineno : 0,
+					colno: Number.isSafeInteger(details.colno) ? details.colno : 0
+				},
+				key = Object.values(eventData).join('|'),
+				now = Date.now();
+			if (seen.size >= 25 || now - (seen.get(key) || 0) < 5000) {
+				return;
+			}
+			seen.set(key, now);
+			nativeFetch(endpoint, {
+				method: 'POST',
+				mode: 'cors',
+				credentials: 'omit',
+				referrerPolicy: 'no-referrer',
+				headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify({
+					site_id: siteId,
+					session_id: sessionId,
+					visitor_id: sessionId,
+					ts: now,
+					kind: 'error',
+					event_name: eventName,
+					event_data: eventData
+				}),
+				keepalive: true
+			}).catch(() => {});
+		};
+
+		window.__snappyMailNotomoReporter = true;
+		addEventListener('error', event => {
+			const target = event.target,
+				resource = target && target !== window && (target.src || target.href);
+			report(resource ? 'resource_error' : 'error', {
+				name: event.error?.name,
+				source: resource || event.filename,
+				lineno: event.lineno,
+				colno: event.colno
+			});
+		}, true);
+		addEventListener('unhandledrejection', event => report('unhandledrejection', {
+			name: event.reason?.name
+		}));
+		doc.addEventListener('securitypolicyviolation', event => report('csp_violation', {
+			source: event.sourceFile,
+			lineno: event.lineNumber,
+			colno: event.columnNumber
+		}));
+		const originalConsoleError = console.error;
+		console.error = function () {
+			report('console_error');
+			return originalConsoleError.apply(this, arguments);
+		};
 	};
 
 try {
@@ -238,7 +291,7 @@ if (!navigator.cookieEnabled) {
 		.then(loadAppData)
 		.then(appData => {
 			RL_APP_DATA = appData;
-			trackLoginPage(appData);
+			installNotomoErrorReporter(appData);
 			startTransportKeepAlive();
 		const url = appData.StaticLibsJs,
 			cb = () => rl.app.bootstart();
