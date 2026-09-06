@@ -55,7 +55,7 @@ function makeFixture(failure) {
 	writeExecutable(path.join(bin, 'gh'), `${nodeShebang}\nif (process.argv.includes('token')) process.stdout.write('fixture-token\\n');\n`);
 	writeExecutable(path.join(bin, 'curl'), `${nodeShebang}\n${append}\n`);
 	writeExecutable(path.join(bin, 'node'), `${nodeShebang}\nif (process.argv.includes('-e')) process.exit(0);\n${append}\n`);
-	writeExecutable(path.join(bin, 'ship-it'), `${nodeShebang}\nconst fs=require('fs'); const cwd=process.cwd(); const args=process.argv.slice(2); fs.appendFileSync(${JSON.stringify(log)}, 'ship-it ' + (cwd.includes('cisl2-base') ? 'nixc ' : 'boompay ') + args.join(' ') + '\\n'); if (${JSON.stringify(failure)} === 'boompay' && cwd.includes('boompay') && args.length === 0) process.exit(17); if (${JSON.stringify(failure)} === 'nixc' && cwd.includes('cisl2-base')) process.exit(23);\n`);
+	writeExecutable(path.join(bin, 'ship-it'), `${nodeShebang}\nconst fs=require('fs'); const cwd=process.cwd(); const args=process.argv.slice(2); if (args.length) { console.error('ship-it takes no arguments'); process.exit(64); } fs.appendFileSync(${JSON.stringify(log)}, 'ship-it ' + (cwd.includes('cisl2-base') ? 'nixc ' : 'boompay ') + args.join(' ') + '\\n'); if (${JSON.stringify(failure)} === 'boompay' && cwd.includes('boompay') && args.length === 0) process.exit(17); if (${JSON.stringify(failure)} === 'nixc' && cwd.includes('cisl2-base')) process.exit(23);\n`);
 	writeExecutable(path.join(bin, 'docker'), `${nodeShebang}
 const cp=require('child_process'); const fs=require('fs'); const args=process.argv.slice(2); const log=${JSON.stringify(log)}; fs.appendFileSync(log, 'docker ' + args.join(' ') + '\\n');
 if (args[0] === 'context' && args[1] === 'show') process.stdout.write('default\\n');
@@ -106,7 +106,10 @@ function runFixture(failure) {
 		return { ...fixture, result, calls, bundles };
 	} finally {
 		server.close();
-		fs.rmSync(fixture.fixture, { recursive: true, force: true });
+		// Some managed hosts allow test fixtures but deny directory removal.
+		if (!process.env.SNAPPYMAIL_KEEP_TEST_DIRS) {
+			fs.rmSync(fixture.fixture, { recursive: true, force: true });
+		}
 	}
 }
 

@@ -13,7 +13,7 @@ Sending encrypted mail must be deterministic, fast, and boring: build the recipi
 
 Every To/Cc/Bcc recipient must produce a fresh, domain-owned public WKD result at send time before automatic encryption is used. A browser-cached key, an app-local key copy, or a failed WKD lookup is not proof that the recipient currently publishes that key. WKD discovery is bounded to two seconds and validates the exact mailbox UID and a usable encryption subkey in the browser. An absent or unusable key means the address may be new, mistyped, not logged in yet, or non-OpenPGP.
 
-There is never partial-recipient encryption. If every recipient shares the sender's domain, an unavailable fresh WKD key, sender vault, browser encryption, or encrypted-attachment capability blocks sending. For external or mixed-domain mail, compose keeps the exact recipient set and requires explicit confirmation before sending the whole message plaintext. When every prerequisite is available, the browser encrypts to every recipient plus the sender, then re-parses the new ciphertext and verifies that every selected encryption subkey ID has a recipient packet. Raw-armored forwarding remains disallowed. Server code never signs, encrypts, decrypts, or receives a private key.
+There is never partial-recipient encryption. An unavailable fresh WKD key, sender vault, browser encryption, or encrypted-attachment capability must not prevent ordinary delivery. For same-domain, external, and mixed-domain mail, compose keeps the exact recipient set and requires explicit confirmation before sending the whole message plaintext. The server validates sender ownership but does not require OpenPGP solely because recipients share the sender's domain. When every prerequisite is available, the browser encrypts to every recipient plus the sender, then re-parses the new ciphertext and verifies that every selected encryption subkey ID has a recipient packet. Raw-armored forwarding remains disallowed. Server code never signs, encrypts, decrypts, or receives a private key.
 
 ## Code Map
 
@@ -26,6 +26,6 @@ OpenPGP change complete, run `npm run verify:openpgp`; it rebuilds, compares the
 public bundles with the local build, and runs a real nixc-to-BoomPay QA send,
 decrypt, and forward. A stale cache bypass, missing plaintext warning, packet
 mismatch, raw armor after decrypt, timeout, or asset mismatch is a failed gate.
-An external missing WKD key is a tested plaintext fallback; a same-domain miss
-is a tested send failure. See
+A missing WKD key is a tested plaintext fallback for both external and
+same-domain recipients; canceling confirmation must leave the message unsent. See
 `docs/openpgp-verification.md`.

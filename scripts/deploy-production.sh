@@ -162,7 +162,6 @@ DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker run --rm --plat
 
 (
   cd "$controller_root"
-  "$ship_it_bin" start
   ./scripts/set-snappymail-release.py \
     --image "$image" \
     --image-id "$image_id" \
