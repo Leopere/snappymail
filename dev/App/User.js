@@ -258,8 +258,18 @@ export class AppUser extends AbstractApp {
 			msg = msg[0];
 		}
 		if (msg?.decrypt) {
-			PgpUserStore.ready()
-				.then(ready => ready ? msg.decrypt() : false)
+			return Promise.resolve()
+				.then(async () => {
+					// Every MessageModel has decrypt(), including ordinary plaintext mail.
+					// Only unresolved OpenPGP content needs the browser vault to be ready.
+					const needsPgpDecrypt = !msg.pgpDecrypted?.() && (msg.pgpEncrypted?.()
+						|| PgpUserStore.isEncrypted(msg.plain?.())
+						|| PgpUserStore.isEncrypted(msg.html?.()));
+					if (needsPgpDecrypt && !await PgpUserStore.ready()) {
+						throw Error('Unlock your OpenPGP keys to decrypt this message before replying or forwarding.');
+					}
+					return msg.decrypt();
+				})
 				.then(success => {
 					const armorRemains = PgpUserStore.hasEncryptedArmor(msg.plain?.())
 						|| PgpUserStore.hasEncryptedArmor(msg.html?.());
@@ -270,7 +280,7 @@ export class AppUser extends AbstractApp {
 					alert(i18n('CRYPTO/ERROR', {
 						TYPE: 'OpenPGP',
 						ERROR: msg.pgpEncrypted?.()?.error
-							|| 'This encrypted message has not been decrypted, so it cannot be forwarded as readable mail.'
+							|| 'This encrypted message must be decrypted before you can reply or forward.'
 					}));
 				})
 				.catch(error => alert(i18n('CRYPTO/ERROR', {

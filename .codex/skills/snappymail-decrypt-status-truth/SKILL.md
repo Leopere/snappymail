@@ -13,7 +13,7 @@ The message view must tell the truth about crypto state. It may show decrypted o
 
 Every fresh message parse starts with neutral crypto flags. Preserve an encrypted marker only while processing a top-level encrypted envelope, then mark it decrypted only after browser OpenPGP has replaced that envelope with parsed plaintext. A quoted or attached `-----BEGIN PGP MESSAGE-----` block is content, not evidence that the enclosing message is still encrypted. Sent mail is decryptable only when its ciphertext contains the sender's encryption subkey packet.
 
-Private keys, private-key passphrases, decrypt, and verify operations are browser-only through the encrypted browser vault. Missing signer keys trigger bounded WKD refresh before final verification failure. Normal Forward and Reply must wait for `PgpUserStore.ready()` and a real decrypt result, then compose from visible plaintext; they must refuse unresolved armor. Forward as attachment is the only deliberate path that preserves the original encrypted RFC822 message.
+Private keys, private-key passphrases, decrypt, and verify operations are browser-only through the encrypted browser vault. Missing signer keys trigger bounded WKD refresh before final verification failure. Normal Forward and Reply require `PgpUserStore.ready()` only when the source still needs OpenPGP decryption. Ordinary plaintext and successfully decrypted plaintext must not depend on the vault being ready. Unresolved encrypted mail must wait for a real decrypt result before composing from visible plaintext; refuse unresolved armor. S/MIME uses its own decryption path. Forward as attachment is the only deliberate path that preserves the original encrypted RFC822 message.
 
 ## Code Map
 

@@ -488,13 +488,12 @@ assert(
 	'Browser bootstrap must bound and retry AppData instead of leaving the login spinner indefinitely on a stalled request.'
 );
 
-const openPgpCiWorkflow = read('.github/workflows/openpgp-contract.yml');
+const openPgpVerification = read('scripts/verify.sh');
 assert(
-	openPgpCiWorkflow.includes('npx playwright install --with-deps chromium')
-		&& openPgpCiWorkflow.includes('run: npm run test:static-build')
-		&& openPgpCiWorkflow.includes('run: npm run check')
-		&& openPgpCiWorkflow.includes('run: npm run test:openpgp'),
-	'OpenPGP CI must build, lint, and run deterministic browser contracts on every protected change.'
+	openPgpVerification.includes('npm run test:static-build')
+		&& openPgpVerification.includes('npm run check')
+		&& openPgpVerification.includes('npm run test:security'),
+	'Local shipping must build, lint, and run the security suite, including OpenPGP contracts.'
 );
 assert(
 	keyservers.indexOf('"https://openpgpkey.{$domain}/.well-known/openpgpkey/{$domain}/hu/{$hash}?l="')
@@ -563,12 +562,12 @@ assert(
 	appUser.includes('ComposeType.ForwardAsAttachment === params[0]')
 		&& appUser.includes('PgpUserStore.ready()')
 		&& appUser.includes('const armorRemains = PgpUserStore.hasEncryptedArmor')
-		&& appUser.includes('cannot be forwarded as readable mail'),
+		&& appUser.includes('must be decrypted before you can reply or forward'),
 	'Ordinary reply and forward must wait for browser decryption and refuse to copy unresolved PGP armor into a new message.'
 );
 assert(
 		appUser.includes("TYPE: 'OpenPGP'")
-			&& appUser.includes('cannot be forwarded as readable mail')
+			&& appUser.includes('must be decrypted before you can reply or forward')
 			&& !appUser.includes('Message could not be decrypted with the login password'),
 		'OpenPGP failure UI must not imply that a mail-login password unlocks browser-only private keys.'
 );
@@ -823,7 +822,7 @@ assert(
 );
 
 const liveOpenPgpContract = read('tests/playwright/openpgp-send-contract.cjs');
-const openPgpWorkflow = read('.github/workflows/openpgp-contract.yml');
+const openPgpWorkflow = read('scripts/verify.sh');
 assert(
 	packageManifest.scripts['test:openpgp']
 		&& packageManifest.scripts['test:openpgp:live']
@@ -849,9 +848,9 @@ assert(
 	'Live OpenPGP verification must prove zero-touch Proton WKD, the public bundle, recipient policy, decrypt, forward, and emit a diagnostic report.'
 );
 assert(
-	openPgpWorkflow.includes('npm run test:openpgp')
-		&& openPgpWorkflow.includes('npx playwright install --with-deps chromium'),
-	'CI must run deterministic OpenPGP contracts with Chromium available.'
+	openPgpWorkflow.includes('npm run test:security')
+		&& openPgpWorkflow.includes('./node_modules/.bin/playwright install chromium'),
+	'Local verification must run deterministic OpenPGP contracts with Chromium available.'
 );
 
 console.log('OpenPGP regression checks passed');

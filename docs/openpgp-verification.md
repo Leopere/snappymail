@@ -17,6 +17,12 @@ retry and direct fallback, exact recipient packet assertion, vault publication
 rollback, forwarding rules, and browser OpenPGP cryptography with independently
 generated test keys.
 
+Reply, Reply all, and Forward also execute the production compose and decrypt
+methods against plaintext, already-decrypted mail, unavailable vaults, delayed
+decryption, failed decryption, and S/MIME. Plaintext and successfully decrypted
+mail must open without requiring an OpenPGP vault. Unresolved ciphertext must
+never enter a normal reply or forward.
+
 Run the complete release gate after rebuilding and deploying an OpenPGP change:
 
 ```sh
@@ -68,7 +74,8 @@ these conditions:
    Fresh discovery also waits for the login-time public-key list to finish loading,
    so an in-progress vault startup cannot overwrite the newly discovered key.
 5. The recipient decrypts the actual delivered mail and verifies its signature in the browser.
-6. A normal forward contains decrypted plaintext, never the original PGP armor.
+6. Reply, Reply all, and normal Forward contain decrypted plaintext, never the
+   original PGP armor.
 
 Every live run writes a non-secret timing and stage report under
 `tmp/openpgp-contract/<run-id>/report.json`. A nonzero exit status, missing
@@ -81,10 +88,17 @@ It includes the current message decrypt/signature/forward state when available.
 The browser bootstrap itself also bounds and retries its `AppData` request once,
 so a stalled initial request cannot leave the user on an indefinite loading spinner.
 
-## CI
+## Shipping and deployment
 
-`.github/workflows/openpgp-contract.yml` builds the browser assets, runs
-`npm run check`, and runs `npm run test:openpgp` on pull requests and `master`
-pushes. CI proves the deterministic contract only; it cannot replace
-`npm run verify:openpgp`, because the latter validates the real public BoomPay
-and nixc deployment.
+The Stop hook runs the local verification command declared in `.ship-it.json`.
+It builds the browser assets, checks continuity, lints the source, and runs the
+security suite, including the deterministic OpenPGP contracts. The former
+Actions workflows are retained as references under `docs/legacy-actions/`.
+
+The deployment handoff builds one immutable image and checks its startup.
+It deploys and accepts BoomPay first, then updates only the SnappyMail service
+on nixc's A250 fleet. It leaves the other migrated applications alone.
+After both rollouts, the live OpenPGP test compares the public bundles with
+the files extracted from that exact image and exercises both mail directions.
+Reports are stored under `~/.local/state/snappymail/openpgp/<source-commit>/`.
+A failed rollout or acceptance check stops the handoff; it is not retried.

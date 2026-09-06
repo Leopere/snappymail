@@ -417,6 +417,15 @@ const verifyForwardUsesPlaintext = async (browser, account, message, label) => {
 		}, message.body);
 		report.directions ||= {};
 		report.directions[label] = { ...report.directions[label], delivery };
+		for (const command of ['replyCommand', 'replyAllCommand']) {
+			await messageView.evaluate((element, name) => ko.dataFor(element)[name](), command);
+			const reply = page.locator('#V-PopupsCompose');
+			await reply.waitFor({ state: 'visible', timeout: 30000 });
+			const quoted = await reply.evaluate(element => ko.dataFor(element).oEditor.getData());
+			assert(quoted.includes(message.body), `${command} must quote the visible decrypted body.`);
+			assert(!quoted.includes('-----BEGIN PGP MESSAGE-----'), `${command} must not quote ciphertext.`);
+			await closeCompose(page, reply);
+		}
 		await messageView.locator('#more-view-dropdown-id').click({ timeout: 30000 });
 		const forward = messageView.locator('menu.dropdown-menu [data-bind="command: forwardCommand"]');
 		await forward.waitFor({ state: 'visible', timeout: 30000 });

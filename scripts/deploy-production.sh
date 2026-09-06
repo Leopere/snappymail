@@ -22,7 +22,7 @@ require_var DEPLOY_IT_ENVIRONMENT
 [[ "$DEPLOY_IT_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail 'DEPLOY_IT_COMMIT must be one full lowercase Git commit ID'
 
 source_root="$(cd "$(dirname "$0")/.." && pwd)"
-for executable in curl docker gh ln mkdir python3; do
+for executable in curl docker gh ln mkdir node python3 tar; do
   command -v "$executable" >/dev/null 2>&1 || fail "$executable is required"
 done
 operator_home="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
@@ -32,6 +32,8 @@ case "$operator_home" in
 esac
 controller_root="$operator_home/.local/share/boompay-vps-infra-l2-production-controller"
 controller_env="$controller_root/.env"
+nixc_controller_root="$(cd "$operator_home/dev/cisl2-base" && pwd -P)" ||
+  fail 'the existing nixc production controller is unavailable'
 gh_config_dir="$operator_home/.config/gh"
 ship_it_bin="${SHIP_IT_BIN:-$operator_home/.local/bin/ship-it}"
 buildx_binary="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$operator_home/.docker/cli-plugins/docker-buildx")"
@@ -40,9 +42,19 @@ tag="$registry:git-$DEPLOY_IT_COMMIT"
 
 [ -d "$controller_root/.git" ] && [ ! -L "$controller_root" ] || fail 'tracked production controller is unavailable'
 [ -f "$controller_env" ] && [ ! -L "$controller_env" ] || fail 'production controller environment is unavailable'
+[ -x "$nixc_controller_root/scripts/set-snappymail-release.py" ] ||
+  fail 'the scoped nixc release binding command is unavailable'
+[ -x "$nixc_controller_root/scripts/deploy-a250-production.sh" ] ||
+  fail 'the scoped nixc deployment controller is unavailable'
 [ -d "$gh_config_dir" ] && [ ! -L "$gh_config_dir" ] || fail 'GitHub CLI configuration is unavailable'
 [ -x "$buildx_binary" ] && [ ! -L "$buildx_binary" ] || fail 'Docker Buildx binary is unavailable'
 [ -x "$ship_it_bin" ] || fail 'ship-it is unavailable'
+audit_env="$operator_home/.config/codex/snappymail-miab-audit-users.env"
+[ -f "$audit_env" ] || fail 'dedicated OpenPGP QA account configuration is unavailable'
+NODE_PATH="$operator_home/dev/snappymail/node_modules" node -e '
+  const fs = require("fs"), { chromium } = require("playwright");
+  if (!fs.existsSync(chromium.executablePath())) process.exit(1);
+' || fail 'the installed local Chromium acceptance runtime is unavailable'
 
 docker_context="$(DOCKER_CONFIG="$operator_home/.docker" docker context show)"
 [ -n "$docker_context" ] || fail 'the active Docker context could not be resolved'
@@ -121,14 +133,39 @@ DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker run --rm --plat
     test "$(stat -c "%U:%G:%a" /snappymail)" = "www-data:www-data:550"
     su nginx -s /bin/sh -c "test -r /snappymail/index.php"
     su www-data -s /bin/sh -c "php -r '\''exit(PHP_VERSION_ID >= 80200 ? 0 : 1);'\''"
+    /entrypoint.sh >/tmp/snappymail-smoke.log 2>&1 &
+    sleep 5
+    pidof supervisord >/dev/null
+    pidof nginx >/dev/null
+    pidof php-fpm >/dev/null
+    test -f /var/lib/snappymail/_data_/_default_/configs/application.ini
+    test -f /var/lib/snappymail/_data_/_default_/admin_password.txt
+    nc -z 127.0.0.1 8888
+    nc -z 127.0.0.1 9000
+    wget -q -T 3 -O /dev/null http://127.0.0.1:8888/
   ' || fail 'the immutable image failed the nginx application-readability smoke test'
+image_id="$(DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" \
+  docker image inspect --format '{{.Id}}' "$image")"
+[[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'the built image has no valid configuration ID'
+image_source="$(DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" \
+  docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")"
+[ "$image_source" = "$DEPLOY_IT_COMMIT" ] || fail 'the built image source revision does not match the release'
+
+# Accept the bytes actually packaged in the immutable image, even when its
+# dependency toolchain differs from the developer's local bundle build.
+mkdir -p "$source_root/snappymail/v/0.0.0"
+DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker run --rm --platform linux/amd64 \
+  --entrypoint /bin/sh "$image" -ceu '
+    cd /snappymail/snappymail/v/*
+    tar -cf - static/js/min/libs.min.js static/js/min/app.min.js static/js/min/openpgp.min.js
+  ' | tar -xf - -C "$source_root/snappymail/v/0.0.0"
 
 (
   cd "$controller_root"
   "$ship_it_bin" start
   ./scripts/set-snappymail-release.py \
     --image "$image" \
-    --image-id "$digest" \
+    --image-id "$image_id" \
     --source "$DEPLOY_IT_COMMIT"
   ./scripts/verify.sh
   BOOMPAY_INFRA_ROOT="$controller_root" \
@@ -146,4 +183,24 @@ DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config" docker run --rm --plat
 )
 
 curl --fail --silent --show-error --max-time 20 https://mail.boompay.ca/ >/dev/null
-printf 'SnappyMail production accepted source=%s image=%s\n' "$DEPLOY_IT_COMMIT" "$image"
+printf 'BoomPay SnappyMail accepted source=%s image=%s\n' "$DEPLOY_IT_COMMIT" "$image"
+
+(
+  cd "$nixc_controller_root"
+  ./scripts/set-snappymail-release.py \
+    --image "$image" \
+    --image-id "$image_id" \
+    --source "$DEPLOY_IT_COMMIT"
+  CISL2_INFRA_ROOT="$nixc_controller_root" \
+  CISL2_PRODUCTION_LIFECYCLE=snappymail \
+    "$ship_it_bin"
+)
+
+curl --fail --silent --show-error --max-time 20 https://mail.nixc.us/ >/dev/null
+# The snapshot supplies the tests and expected bundles. Reuse only the installed
+# local browser runtime; never run mutable checkout test source in production.
+NODE_PATH="$operator_home/dev/snappymail/node_modules" \
+SNAPPYMAIL_AUDIT_ENV="$audit_env" \
+SNAPPYMAIL_OPENPGP_ARTIFACT_DIR="$operator_home/.local/state/snappymail/openpgp/$DEPLOY_IT_COMMIT" \
+  node "$source_root/tests/playwright/openpgp-send-contract.cjs"
+printf 'BoomPay and nixc SnappyMail accepted source=%s image=%s\n' "$DEPLOY_IT_COMMIT" "$image"

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "delivery": "local",
+  "verification": {
+    "command": ["./scripts/verify.sh"],
+    "timeout_seconds": 1800
+  }
+}

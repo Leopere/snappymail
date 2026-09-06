@@ -11,6 +11,14 @@ const manifest = JSON.parse(read('.deploy-it.json'));
 const deploy = read('scripts/deploy-production.sh');
 const dockerfile = read('.docker/release/Dockerfile');
 const entrypoint = read('.docker/release/files/entrypoint.sh');
+const shipping = JSON.parse(read('.ship-it.json'));
+assert.deepStrictEqual(shipping, {
+	version: 1,
+	delivery: 'local',
+	verification: { command: ['./scripts/verify.sh'], timeout_seconds: 1800 }
+});
+assert(fs.statSync(path.join(root, 'scripts/verify.sh')).mode & 0o111,
+	'The hook verification command must be executable.');
 
 assert.deepStrictEqual(manifest, {
 	version: 1,
@@ -45,6 +53,22 @@ for (const required of [
 ]) {
 	assert(deploy.includes(required), `Missing direct production contract: ${required}`);
 }
+for (const required of [
+	'nixc_controller_root=',
+	'CISL2_INFRA_ROOT="$nixc_controller_root"',
+	'CISL2_PRODUCTION_LIFECYCLE=snappymail',
+	'https://mail.nixc.us/',
+	'node "$source_root/tests/playwright/openpgp-send-contract.cjs"',
+	'tar -cf - static/js/min/libs.min.js static/js/min/app.min.js static/js/min/openpgp.min.js'
+]) {
+	assert(deploy.includes(required), `Missing two-fleet acceptance contract: ${required}`);
+}
+assert(deploy.indexOf('https://mail.boompay.ca/') < deploy.indexOf('CISL2_PRODUCTION_LIFECYCLE=snappymail'),
+	'Accept BoomPay before starting the nixc rollout.');
+assert(deploy.indexOf('https://mail.nixc.us/') < deploy.indexOf('node "$source_root/tests/playwright/openpgp-send-contract.cjs"'),
+	'Browser acceptance must run after both fleets receive the release.');
+assert(!deploy.includes('./stack deploy migrated-apps'),
+	'A SnappyMail release must not redeploy unrelated migrated applications.');
 assert(!deploy.includes('${HOME'), 'The deploy-it snapshot clears HOME; deployment must resolve the OS account home directory.');
 assert(deploy.includes('pwd.getpwuid(os.getuid()).pw_dir'));
 assert(deploy.includes('docker_config/cli-plugins/docker-buildx'));
