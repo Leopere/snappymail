@@ -24,69 +24,17 @@ assert.deepStrictEqual(manifest, {
 	version: 1,
 	after_ship: true,
 	environment: 'production',
-	timeout_seconds: 3600,
+	timeout_seconds: 1800,
 	command: ['./scripts/deploy-production.sh'],
 	env: []
 });
-for (const required of [
-	'docker buildx build',
-	'docker buildx version',
-	'--platform linux/amd64',
-	'--metadata-file "$metadata"',
-	'containerimage.digest',
-	'docker buildx imagetools inspect',
-	'docker run --rm --platform linux/amd64',
-	'www-data:www-data:550',
-	'test -r /snappymail/index.php',
-	'su www-data -s /bin/sh -c "php -r',
-	'./scripts/set-snappymail-release.py',
-	'./scripts/verify.sh',
-	'BOOMPAY_PLATFORM_ROOT=none',
-	'BOOMPAY_GARAGE_ROOT=none',
-	'BOOMPAY_CAPITAL_ROOT=none',
-	'BOOMPAY_PARTNERS_ROOT=none',
-	'BOOMPAY_APPLICATION_RELEASE=snappymail',
-	'BOOMPAY_OPERATOR_WORKSPACE_LIFECYCLE=none',
-	'BOOMPAY_TRUST_PINNED_HOST_IP=1',
-	'"$ship_it_bin"',
-	'https://mail.boompay.ca/'
-]) {
-	assert(deploy.includes(required), `Missing direct production contract: ${required}`);
+const handoff = read('scripts/jenkins-release.py');
+assert(deploy.includes('jenkins-release.py'), 'Production delivery must use the Jenkins handoff.');
+assert(!deploy.includes('docker buildx build'), 'Jenkins owns the release build.');
+assert(!deploy.includes('ship_it_bin'), 'Delivery must not trigger separate infrastructure releases.');
+for (const required of ['EXPECTED_REVISION', 'mail.boompay.ca', 'mail.nixc.us', 'accepted.json']) {
+	assert(handoff.includes(required), `Missing coordinated deployment contract: ${required}`);
 }
-for (const required of [
-	'nixc_controller_root=',
-	'CISL2_INFRA_ROOT="$nixc_controller_root"',
-	'CISL2_PRODUCTION_LIFECYCLE=snappymail',
-	'https://mail.nixc.us/',
-	'node "$source_root/tests/playwright/openpgp-send-contract.cjs"',
-	'tar -cf - static/js/min/libs.min.js static/js/min/app.min.js static/js/min/openpgp.min.js'
-]) {
-	assert(deploy.includes(required), `Missing two-fleet acceptance contract: ${required}`);
-}
-assert(deploy.indexOf('https://mail.boompay.ca/') < deploy.indexOf('CISL2_PRODUCTION_LIFECYCLE=snappymail'),
-	'Accept BoomPay before starting the nixc rollout.');
-assert(deploy.indexOf('https://mail.nixc.us/') < deploy.indexOf('node "$source_root/tests/playwright/openpgp-send-contract.cjs"'),
-	'Browser acceptance must run after both fleets receive the release.');
-assert(!deploy.includes('./stack deploy migrated-apps'),
-	'A SnappyMail release must not redeploy unrelated migrated applications.');
-assert(!deploy.includes('${HOME'), 'The deploy-it snapshot clears HOME; deployment must resolve the OS account home directory.');
-assert(deploy.includes('pwd.getpwuid(os.getuid()).pw_dir'));
-assert(deploy.includes('docker_config/cli-plugins/docker-buildx'));
-assert(deploy.includes('DOCKER_CONFIG="$operator_home/.docker" docker context show'));
-assert(deploy.includes("--format '{{.Endpoints.docker.Host}}' \"$docker_context\""));
-assert(deploy.includes("*) fail 'the active Docker context must use a local Unix socket'"));
-assert(deploy.includes('[ -S "$docker_socket" ] && [ ! -L "$docker_socket" ]'));
-assert(deploy.includes('DOCKER_HOST="$docker_host" DOCKER_CONFIG="$docker_config"'));
-assert(deploy.includes("docker info --format '{{.ServerVersion}}' >/dev/null || fail 'the active Docker daemon is unavailable'"));
-assert(deploy.includes('["gh", "auth", "token", "--hostname", "github.com"]'));
-assert(deploy.includes('os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600'));
-assert(deploy.includes('{"auths": {"ghcr.io": {"auth": credential}}}'));
-assert(!deploy.includes('docker login'),
-	'The non-interactive deploy must not invoke a macOS credential helper.');
-assert(deploy.indexOf('docker buildx imagetools inspect') < deploy.indexOf('./scripts/set-snappymail-release.py'));
-assert(deploy.indexOf('docker run --rm --platform linux/amd64') < deploy.indexOf('./scripts/set-snappymail-release.py'));
-assert(deploy.indexOf('./scripts/set-snappymail-release.py') < deploy.indexOf('./scripts/verify.sh'));
-assert(deploy.indexOf('./scripts/verify.sh') < deploy.lastIndexOf('"$ship_it_bin"'));
 assert(dockerfile.includes('ARG SOURCE_REVISION'));
 assert(dockerfile.includes('LABEL org.opencontainers.image.revision="$SOURCE_REVISION"'));
 assert(dockerfile.includes('chown www-data:www-data /snappymail'));
@@ -113,4 +61,4 @@ assert(
 		dockerfile.indexOf('COPY --chown=root:root .docker/release/files /'),
 	'The application root must be secured after the final root-owned overlay copy.'
 );
-console.log('Direct production deployment contract checks passed');
+console.log('Coordinated Jenkins deployment contract checks passed');

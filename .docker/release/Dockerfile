@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 
-FROM alpine:3.18.5@sha256:34871e7290500828b39e22294660bee86d966bc0017544e848dd9a255cdf59e0 AS builder
+FROM --platform=$BUILDPLATFORM alpine:3.18.5@sha256:34871e7290500828b39e22294660bee86d966bc0017544e848dd9a255cdf59e0 AS builder
 RUN apk add --no-cache php82 php82-json php-phar php-zip
 RUN apk add --no-cache npm
 RUN npm install -g gulp yarn
 WORKDIR /source
 COPY package.json yarn.lock ./
-RUN yarn install
+RUN yarn install --frozen-lockfile --network-timeout 600000 --network-concurrency 4
 COPY . .
 # Patch release.php with hotfix from: https://github.com/xgbstar1/snappymail-docker/blob/main/Dockerfile, so that release.php doesn't fail with error
 RUN sed -i 's_^if.*rename.*snappymail.v.0.0.0.*$_if (!!system("mv snappymail/v/0.0.0 snappymail/v/{$package->version}")) {_' cli/release.php  || true
@@ -25,9 +25,7 @@ RUN set -eux; \
 # Inspired by the original Rainloop dockerfile from youtous on GitLab
 FROM php:8.2-fpm-alpine3.24@sha256:41ddda74d95c43518c3e4414e6c1c99f9c062d397f0c7a2d8cadf8d1f035d196 AS final
 
-ARG SOURCE_REVISION
 LABEL org.label-schema.description="SnappyMail webmail client image using nginx, php-fpm on Alpine"
-LABEL org.opencontainers.image.revision="$SOURCE_REVISION"
 
 # Refresh the pinned Alpine runtime and enforce the patched c-ares floor.
 RUN set -eux; \
@@ -209,3 +207,6 @@ EXPOSE 8888
 EXPOSE 9000
 ENTRYPOINT []
 CMD ["/entrypoint.sh"]
+
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision="$SOURCE_REVISION"

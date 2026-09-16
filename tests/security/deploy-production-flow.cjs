@@ -4,145 +4,153 @@
 const assert = require('assert');
 const childProcess = require('child_process');
 const fs = require('fs');
-const net = require('net');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 
 const root = path.resolve(__dirname, '../..');
-const realPython = childProcess.execFileSync('/bin/sh', ['-c', 'command -v python3'], { encoding: 'utf8' }).trim();
-const realTar = childProcess.execFileSync('/bin/sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
-const nodeShebang = `#!${process.execPath}`;
-const deploySource = path.join(root, 'scripts/deploy-production.sh');
-const shellQuote = value => "'" + value.replace(/'/g, "'\\''") + "'";
+const deploy = path.join(root, 'scripts/deploy-production.sh');
+const revision = 'b'.repeat(40);
+const image = 'ghcr.io/leopere/boompay-snappymail@sha256:' + 'a'.repeat(64);
+const imageId = 'sha256:' + 'c'.repeat(64);
 
-const writeExecutable = (file, contents) => {
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, contents);
-	fs.chmodSync(file, 0o755);
-};
-
-function makeFixture(failure) {
-	const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'snappymail-deploy-flow-'));
-	const bin = path.join(fixture, 'bin');
-	const home = path.join(fixture, 'home');
-	const source = path.join(fixture, 'source');
-	const controller = path.join(home, '.local/share/boompay-vps-infra-l2-production-controller');
-	const nixc = path.join(home, 'dev/cisl2-base');
-	const log = path.join(fixture, 'calls.log');
-	const socketPath = path.join(fixture, 'docker.sock');
-	const imageTree = path.join(fixture, 'image-tree/static/js/min');
-	fs.mkdirSync(bin, { recursive: true });
-	fs.mkdirSync(path.join(controller, '.git'), { recursive: true });
-	fs.mkdirSync(path.join(home, '.config/gh'), { recursive: true });
-	fs.mkdirSync(path.join(home, '.config/codex'), { recursive: true });
-	fs.writeFileSync(path.join(home, '.config/codex/snappymail-miab-audit-users.env'), 'fixture=1\n');
-	fs.mkdirSync(path.join(home, 'dev/snappymail/node_modules'), { recursive: true });
-	fs.mkdirSync(path.join(home, '.docker/cli-plugins'), { recursive: true });
-	fs.mkdirSync(path.join(source, '.docker/release'), { recursive: true });
-	fs.mkdirSync(path.join(source, 'scripts'), { recursive: true });
-	fs.mkdirSync(path.join(source, 'tests/playwright'), { recursive: true });
-	fs.mkdirSync(imageTree, { recursive: true });
-	fs.writeFileSync(path.join(controller, '.env'), 'fixture\n');
-	fs.copyFileSync(deploySource, path.join(source, 'scripts/deploy-production.sh'));
-	fs.chmodSync(path.join(source, 'scripts/deploy-production.sh'), 0o755);
-	fs.writeFileSync(path.join(source, '.docker/release/Dockerfile'), 'FROM scratch\n');
-	fs.writeFileSync(path.join(source, 'tests/playwright/openpgp-send-contract.cjs'), 'fixture\n');
-	for (const name of ['libs.min.js', 'app.min.js', 'openpgp.min.js']) {
-		fs.writeFileSync(path.join(imageTree, name), `fixture-${name}\n`);
-	}
-
-	const append = `const fs = require('fs'); fs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(' ') + '\\n');`;
-	writeExecutable(path.join(bin, 'gh'), `${nodeShebang}\nif (process.argv.includes('token')) process.stdout.write('fixture-token\\n');\n`);
-	writeExecutable(path.join(bin, 'curl'), `${nodeShebang}\n${append}\n`);
-	writeExecutable(path.join(bin, 'node'), `${nodeShebang}\nif (process.argv.includes('-e')) process.exit(0);\n${append}\n`);
-	writeExecutable(path.join(bin, 'ship-it'), `${nodeShebang}\nconst fs=require('fs'); const cwd=process.cwd(); const args=process.argv.slice(2); if (args.length) { console.error('ship-it takes no arguments'); process.exit(64); } fs.appendFileSync(${JSON.stringify(log)}, 'ship-it ' + (cwd.includes('cisl2-base') ? 'nixc ' : 'boompay ') + args.join(' ') + '\\n'); if (${JSON.stringify(failure)} === 'boompay' && cwd.includes('boompay') && args.length === 0) process.exit(17); if (${JSON.stringify(failure)} === 'nixc' && cwd.includes('cisl2-base')) process.exit(23);\n`);
-	writeExecutable(path.join(bin, 'docker'), `${nodeShebang}
-const cp=require('child_process'); const fs=require('fs'); const args=process.argv.slice(2); const log=${JSON.stringify(log)}; fs.appendFileSync(log, 'docker ' + args.join(' ') + '\\n');
-if (args[0] === 'context' && args[1] === 'show') process.stdout.write('default\\n');
-else if (args[0] === 'context' && args[1] === 'inspect') process.stdout.write('unix://${JSON.stringify(socketPath)}\\n'.replace(/"/g, ''));
-else if (args[0] === 'image' && args[1] === 'inspect' && args.includes('{{.Id}}')) process.stdout.write('sha256:' + 'c'.repeat(64) + '\\n');
-else if (args[0] === 'image' && args[1] === 'inspect' && args.includes('{{index .Config.Labels "org.opencontainers.image.revision"}}')) process.stdout.write('b'.repeat(40) + '\\n');
-else if (args[0] === 'buildx' && args[1] === 'build') { const i=args.indexOf('--metadata-file'); fs.writeFileSync(args[i+1], JSON.stringify({'containerimage.digest':'sha256:' + 'a'.repeat(64)})); }
-else if (args[0] === 'run' && args.some(value => value.includes('tar -cf -'))) { const result = cp.spawnSync(${JSON.stringify(realTar)}, ['-cf','-', 'static/js/min/libs.min.js','static/js/min/app.min.js','static/js/min/openpgp.min.js'], {cwd:${JSON.stringify(path.join(fixture, 'image-tree'))}, stdio:['ignore','inherit','inherit']}); process.exit(result.status ?? 1); }
-`);
-	writeExecutable(path.join(bin, 'python3'), `${nodeShebang}
-const cp=require('child_process'); const args=process.argv.slice(2); if (args[0] === '-c' && args[1].includes('pwd.getpwuid')) { process.stdout.write(process.env.FAKE_OPERATOR_HOME + '\\n'); process.exit(0); } const input=args[0] === '-' ? require('fs').readFileSync(0) : undefined; const child=cp.spawnSync(${JSON.stringify(realPython)}, args, {input, stdio:['pipe','pipe','inherit']}); process.stdout.write(child.stdout || ''); process.exit(child.status || 0);
-`);
-	writeExecutable(path.join(controller, 'scripts/set-snappymail-release.py'), `#!/bin/sh\nprintf 'boompay-bind %s\\n' "$*" >> ${shellQuote(log)}\n`);
-	writeExecutable(path.join(controller, 'scripts/verify.sh'), `#!/bin/sh\nprintf 'boompay-verify\\n' >> ${shellQuote(log)}\n`);
-	writeExecutable(path.join(nixc, 'scripts/set-snappymail-release.py'), `#!/bin/sh\nprintf 'nixc-bind %s\\n' "$*" >> ${shellQuote(log)}\n`);
-	writeExecutable(path.join(nixc, 'scripts/deploy-a250-production.sh'), `#!/bin/sh\nprintf 'nixc-deploy %s\\n' "$*" >> ${shellQuote(log)}\n`);
-	writeExecutable(path.join(home, '.docker/cli-plugins/docker-buildx'), '#!/bin/sh\nexit 0\n');
-	fs.mkdirSync(path.dirname(socketPath), { recursive: true });
-
-	return { fixture, bin, home, source, controller, nixc, log, socketPath, imageTree };
-}
-
-function runFixture(failure) {
-	const fixture = makeFixture(failure);
-	const server = net.createServer();
-	server.listen(fixture.socketPath);
-	try {
-		const result = childProcess.spawnSync(fixture.source + '/scripts/deploy-production.sh', [], {
-			cwd: fixture.source,
-			env: {
-				PATH: `${fixture.bin}:/usr/bin:/bin`,
-				FAKE_OPERATOR_HOME: fixture.home,
-				DEPLOY_IT_COMMIT: 'b'.repeat(40),
-				DEPLOY_IT_ENVIRONMENT: 'production',
-				SHIP_IT_BIN: `${fixture.bin}/ship-it`
-			},
-			encoding: 'utf8',
-			timeout: 60000
-		});
-		assert(!result.error, result.error?.message);
-		const calls = fs.existsSync(fixture.log)
-			? fs.readFileSync(fixture.log, 'utf8').trim().split('\n').filter(Boolean)
-			: [];
-		const bundles = ['libs.min.js', 'app.min.js', 'openpgp.min.js'].map(name => {
-			const file = path.join(fixture.source, 'snappymail/v/0.0.0/static/js/min', name);
-			return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-		});
-		return { ...fixture, result, calls, bundles };
-	} finally {
-		server.close();
-		// Some managed hosts allow test fixtures but deny directory removal.
-		if (!process.env.SNAPPYMAIL_KEEP_TEST_DIRS) {
-			fs.rmSync(fixture.fixture, { recursive: true, force: true });
+function acceptedReceipt(pairOverride = {}) {
+	return {
+		schema: 'jenkins-boompay-image/v1', application: 'snappymail', revision, image, image_id: imageId,
+		result: 'pass', host_activation: {
+			schema: 'jenkins-host-appliance-activation/v1', application: 'snappymail', source_revision: revision,
+			image, image_config_digest: imageId, provenance: 'jenkins', snappymail_pair: {
+				schema: 'jenkins-snappymail-pair/v1', revision, image, image_id: imageId,
+				targets: ['mail.boompay.ca', 'mail.nixc.us'],
+                boompay_runtime_image_id: 'sha256:' + 'd'.repeat(64),
+                nix_runtime_image_id: 'sha256:' + 'e'.repeat(64),
+                controller_revisions: { boompay: 'f'.repeat(40), nix: '1'.repeat(40) },
+                openpgp_report: { status: 'passed', sha256: '2'.repeat(64) }, ...pairOverride
+			}
 		}
-	}
+	};
 }
 
-const success = runFixture(null);
-assert.strictEqual(success.result.status, 0, success.result.stderr);
-assert.deepStrictEqual(success.bundles, ['libs.min.js', 'app.min.js', 'openpgp.min.js'].map(name => `fixture-${name}\n`));
-const successCalls = success.calls.join('\n');
-const releaseBinding = ' --image ghcr.io/leopere/boompay-snappymail@sha256:' + 'a'.repeat(64) + ' --image-id sha256:' + 'c'.repeat(64) + ' --source ' + 'b'.repeat(40);
-assert(successCalls.includes('boompay-bind' + releaseBinding));
-assert(successCalls.includes('nixc-bind' + releaseBinding));
-assert(successCalls.indexOf('boompay-bind') < successCalls.indexOf('https://mail.boompay.ca/'));
-assert(successCalls.indexOf('https://mail.boompay.ca/') < successCalls.indexOf('nixc-bind'));
-assert(successCalls.indexOf('nixc-bind') < successCalls.indexOf('https://mail.nixc.us/'));
-assert(successCalls.indexOf('https://mail.nixc.us/') < successCalls.indexOf('openpgp-send-contract.cjs'));
-
-for (const failure of ['boompay', 'nixc']) {
-	const failed = runFixture(failure);
-	assert.notStrictEqual(failed.result.status, 0, `${failure} failure unexpectedly succeeded: ${failed.result.stderr}`);
-	const calls = failed.calls.join('\n');
-	assert.strictEqual(failed.calls.filter(line => line.trim() === 'ship-it boompay').length, 1,
-		'BoomPay shipping must execute exactly once');
-	assert.strictEqual(failed.calls.filter(line => line.trim() === 'ship-it nixc').length, failure === 'nixc' ? 1 : 0,
-		'nixc shipping must execute at most once, after BoomPay succeeds');
-	if (failure === 'boompay') {
-		assert(calls.includes('boompay-bind'), `${failure} calls: ${calls}`);
-		assert(!calls.includes('nixc-bind'));
-		assert(!calls.includes('https://mail.nixc.us/'));
-	} else {
-		assert(calls.includes('https://mail.boompay.ca/'));
-		assert(calls.includes('nixc-bind'));
-		assert(!calls.includes('https://mail.nixc.us/'));
-		assert(!calls.includes('openpgp-send-contract.cjs'));
-	}
+function runMock(pairOverride = {}, options = {}) {
+	const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'snappymail-jenkins-flow-'));
+	const password = path.join(fixture, 'password');
+	fs.writeFileSync(password, 'test-password\n', { mode: 0o600 });
+	let triggerCount = 0;
+	let crumbSeen = false;
+	let buildStatusRequests = 0;
+	let queueRequests = 0;
+	const server = http.createServer((request, response) => {
+		const base = `http://127.0.0.1:${server.address().port}`;
+		const pathname = new URL(request.url, base).pathname;
+		const parameters = value => [{ parameters: [{ name: 'EXPECTED_REVISION', value }] }];
+		const queue = value => {
+			queueRequests += 1;
+			const item = { task: { url: base + '/job/deploy-snappymail-boompay-ca/' }, actions: parameters(value) };
+			if (!options.existingQueue || queueRequests > 1) item.executable = { number: 42, url: base + '/job/deploy-snappymail-boompay-ca/42/' };
+			return item;
+		};
+		if (!/^Basic /.test(request.headers.authorization || '')) {
+			return response.writeHead(403).end();
+		}
+		if (pathname === '/job/deploy-snappymail-boompay-ca/api/json') {
+			const state = {};
+			if (options.existingQueue) state.queueItem = {
+				id: 7, url: options.existingQueueUrl || base + '/queue/item/7/'
+			};
+			if (options.existingBuildRevision) state.lastBuild = {
+				number: 42, building: true, url: base + '/job/deploy-snappymail-boompay-ca/42/', actions: parameters(options.existingBuildRevision)
+			};
+			return response.end(JSON.stringify(state));
+		}
+		if (pathname === '/crumbIssuer/api/json') return response.end(JSON.stringify({ crumbRequestField: 'Jenkins-Crumb', crumb: 'crumb-value' }));
+		if (pathname === '/job/deploy-snappymail-boompay-ca/buildWithParameters') {
+			triggerCount += 1;
+			crumbSeen = request.headers['jenkins-crumb'] === 'crumb-value';
+			let body = ''; request.on('data', data => { body += data; });
+			return request.on('end', () => {
+				assert.strictEqual(body, `EXPECTED_REVISION=${revision}`);
+				response.writeHead(201, { Location: base + '/queue/item/7/' }).end();
+			});
+		}
+		if (pathname === '/queue/item/7/api/json') return response.end(JSON.stringify(queue(options.existingQueueRevision || revision)));
+		if (pathname === '/job/deploy-snappymail-boompay-ca/42/api/json') {
+			buildStatusRequests += 1;
+			if (options.transientGet && buildStatusRequests === 1) return response.writeHead(503).end();
+			if (options.existingBuildRevision && buildStatusRequests === 1) {
+				return response.end(JSON.stringify({ number: 42, url: base + '/job/deploy-snappymail-boompay-ca/42/', building: true, actions: parameters(options.existingBuildRevision) }));
+			}
+			return response.end(JSON.stringify({ number: 42, url: base + '/job/deploy-snappymail-boompay-ca/42/', building: false, result: 'SUCCESS', actions: parameters(options.existingBuildRevision || revision) }));
+		}
+		if (pathname === '/job/deploy-snappymail-boompay-ca/42/artifact/release/accepted.json') return response.end(JSON.stringify(acceptedReceipt(pairOverride)));
+		response.writeHead(404).end();
+	});
+	return new Promise((resolve, reject) => server.listen(0, '127.0.0.1', () => {
+		const child = childProcess.spawn(options.resume ? path.join(root, 'scripts/jenkins-release.py') : deploy,
+			options.resume ? [revision, '42'] : [], {
+			env: { ...process.env, DEPLOY_IT_COMMIT: revision, DEPLOY_IT_ENVIRONMENT: 'production', SNAPPYMAIL_JENKINS_TESTING: '1', SNAPPYMAIL_JENKINS_TEST_URL: `http://127.0.0.1:${server.address().port}`, SNAPPYMAIL_JENKINS_TEST_PASSWORD_FILE: password, SNAPPYMAIL_JENKINS_TIMEOUT_SECONDS: '5' }
+		});
+		let stdout = '', stderr = '';
+		child.stdout.on('data', data => { stdout += data; });
+		child.stderr.on('data', data => { stderr += data; });
+		child.once('error', reject);
+		child.once('close', status => server.close(() => {
+			try { fs.rmSync(fixture, { recursive: true, force: true }); } catch (error) {
+				if (error.code !== 'EPERM') throw error;
+			}
+			resolve({ status, stdout, stderr, triggerCount, crumbSeen, buildStatusRequests });
+		}));
+	}));
 }
 
-console.log('Offline production deployment flow checks passed');
+(async () => {
+	const success = await runMock();
+	assert.strictEqual(success.status, 0, success.stderr);
+	assert.strictEqual(success.triggerCount, 1, 'one Jenkins build must activate both targets');
+	assert(success.crumbSeen, 'the Jenkins trigger must include its CSRF crumb');
+	assert.match(success.stdout, /BoomPay and nixc\.us SnappyMail accepted revision=/);
+	const queued = await runMock({}, { existingQueue: true });
+	assert.strictEqual(queued.status, 0, queued.stderr);
+	assert.strictEqual(queued.triggerCount, 0, 'a matching queued release must be monitored without another POST');
+	assert.match(queued.stdout, /Attaching to existing SnappyMail Jenkins queue item/);
+	const relativeQueue = await runMock({}, { existingQueue: true, existingQueueUrl: 'queue/item/7/' });
+	assert.strictEqual(relativeQueue.status, 0, relativeQueue.stderr);
+	assert.strictEqual(relativeQueue.triggerCount, 0, 'the known Jenkins relative queue URL must attach without another POST');
+	const running = await runMock({}, { existingBuildRevision: revision });
+	assert.strictEqual(running.status, 0, running.stderr);
+	assert.strictEqual(running.triggerCount, 0, 'a matching running release must be monitored without another POST');
+	assert.match(running.stdout, /Attaching to existing SnappyMail Jenkins build #42/);
+	const otherRevision = await runMock({}, { existingBuildRevision: 'd'.repeat(40) });
+	assert.strictEqual(otherRevision.status, 0, otherRevision.stderr);
+	assert.strictEqual(otherRevision.triggerCount, 1, 'a different revision must never be attached');
+	const queuedOtherRunningExpected = await runMock({}, {
+		existingQueue: true, existingQueueRevision: 'd'.repeat(40), existingBuildRevision: revision
+	});
+	assert.strictEqual(queuedOtherRunningExpected.status, 0, queuedOtherRunningExpected.stderr);
+	assert.strictEqual(queuedOtherRunningExpected.triggerCount, 0,
+		'a different queued revision must not hide the requested running build');
+	assert.match(queuedOtherRunningExpected.stdout, /Attaching to existing SnappyMail Jenkins build #42/);
+	const invalidQueueUrl = await runMock({}, { existingQueue: true, existingQueueUrl: 'queue/item/8/' });
+	assert.notStrictEqual(invalidQueueUrl.status, 0, 'an arbitrary relative queue URL must fail closed');
+	assert.strictEqual(invalidQueueUrl.triggerCount, 0, 'an invalid queue identity must not post a release');
+	const retried = await runMock({}, { transientGet: true });
+	assert.strictEqual(retried.status, 0, retried.stderr);
+	assert.strictEqual(retried.buildStatusRequests, 2, 'a transient Jenkins GET must retry once');
+	const resumed = await runMock({}, { resume: true, transientGet: true });
+	assert.strictEqual(resumed.status, 0, resumed.stderr);
+	assert.strictEqual(resumed.triggerCount, 0, 'resuming an existing build must not post another release');
+	assert.match(resumed.stdout, /Resuming SnappyMail Jenkins build #42 monitoring/);
+
+	const mismatch = await runMock({ revision: 'd'.repeat(40) });
+	assert.notStrictEqual(mismatch.status, 0, 'a paired receipt for another revision must fail');
+	assert.match(mismatch.stderr, /paired SnappyMail receipt does not bind/);
+    for (const invalid of [
+        { targets: ['mail.boompay.ca'] },
+        { boompay_runtime_image_id: '' },
+        { nix_runtime_image_id: '' },
+        { openpgp_report: { status: 'failed', sha256: '2'.repeat(64) } }
+    ]) {
+        const rejected = await runMock(invalid);
+        assert.notStrictEqual(rejected.status, 0, 'incomplete paired acceptance must fail');
+    }
+	console.log('Offline Jenkins paired-release flow checks passed');
+})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });

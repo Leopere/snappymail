@@ -2,7 +2,7 @@
   "version": 1,
   "after_ship": true,
   "environment": "production",
-  "timeout_seconds": 3600,
+  "timeout_seconds": 1800,
   "command": ["./scripts/deploy-production.sh"],
   "env": []
 }

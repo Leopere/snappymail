@@ -302,6 +302,20 @@ const openCompose = async page => {
 };
 
 const closeCompose = async (page, compose) => {
+	await compose.waitFor({ state: 'visible', timeout: 30000 });
+	await compose.evaluate(element => new Promise((resolve, reject) => {
+		const deadline = performance.now() + 5000;
+		const waitForOpening = () => {
+			if (element.classList.contains('animate') && getComputedStyle(element).opacity === '1') {
+				resolve();
+			} else if (performance.now() >= deadline) {
+				reject(new Error('Compose opening animation did not complete.'));
+			} else {
+				requestAnimationFrame(waitForOpening);
+			}
+		};
+		waitForOpening();
+	}));
 	await compose.evaluate(element => ko.dataFor(element).close());
 	await compose.waitFor({ state: 'hidden', timeout: 30000 });
 };
