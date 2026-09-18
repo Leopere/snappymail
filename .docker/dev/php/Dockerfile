@@ -1,8 +1,7 @@
 FROM php:7.4-fpm
 
-RUN apt-get update
-
-RUN apt-get install -y \
+RUN apt-get update && \
+	apt-get install -y --no-install-recommends \
 	git unzip wget zip curl mlocate \
 	libicu-dev libpcre3-dev libicu-dev \
 	build-essential chrpath libssl-dev \
@@ -22,9 +21,13 @@ RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local
 
 RUN curl --location --output /usr/local/bin/phpunit https://phar.phpunit.de/phpunit.phar && chmod +x /usr/local/bin/phpunit
 
-RUN apt-get -y autoremove && apt-get clean
+RUN apt-get -y autoremove && \
+	apt-get clean && \
+	rm -rf /var/lib/apt/lists/*
 
 RUN sed -i '/^;catch_workers_output/ccatch_workers_output = yes' '/usr/local/etc/php-fpm.d/www.conf'
+
+USER www-data
 
 EXPOSE 9000
 

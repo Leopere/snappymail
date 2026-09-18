@@ -36,3 +36,12 @@
 /vendors/email-classifier/dist/
 /integrations/nextcloud/rainloop
 /integrations/owncloud/rainloop
+
+# Local credentials and runtime state
+*.age
+id_ed25519
+id_rsa
+*.pem
+*.key
+runtime/
+secrets/

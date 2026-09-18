@@ -1,5 +1,6 @@
 /*
-npm install rollup rollup-plugin-includepaths rollup-plugin-babel rollup-plugin-external-globals rollup-plugin-html rollup-plugin-terser
+Optional standalone build (Node 20+). The supported build is npm run build.
+npm install rollup rollup-plugin-includepaths rollup-plugin-babel rollup-plugin-external-globals rollup-plugin-html @rollup/plugin-terser
 rollup -c
 */
 
@@ -7,7 +8,7 @@ import babel from 'rollup-plugin-babel';
 import includePaths from 'rollup-plugin-includepaths';
 import externalGlobals from "rollup-plugin-external-globals";
 import html from 'rollup-plugin-html';
-import { terser } from "rollup-plugin-terser";
+import terser from "@rollup/plugin-terser";
 
 let includePathOptions = {
 	include: {},

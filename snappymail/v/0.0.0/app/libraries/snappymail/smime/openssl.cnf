@@ -145,8 +145,8 @@ keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = clientAuth, emailProtection
 subjectAltName = email:copy
 
-[ snappymail_ca ]
-basicConstraints = critical,CA:true
+[ snappymail_cert ]
+basicConstraints = critical,CA:FALSE
 keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = clientAuth, emailProtection
 subjectAltName = email:copy

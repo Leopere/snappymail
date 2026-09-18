@@ -121,9 +121,7 @@ class Certificate
 			'private_key_type'   => $this->keyType,
 			'encrypt_key'        => true,
 			'encrypt_key_cipher' => $this->cipher,
-			// v3_ca    = Extensions to use when signing a CA
-			// usr_cert = Extensions for when we sign normal certs (specified as default)
-			'x509_extensions'    => 'snappymail_ca', // v3_ca | usr_cert
+			'x509_extensions'    => 'snappymail_cert',
 			// Extensions to add to a certificate request
 			'req_extensions'     => 'snappymail_req', // v3_req
 		);
@@ -133,7 +131,7 @@ class Certificate
 			unset($dn['organizationalUnitName']);
 		}
 
-		$pkey = null; // openssl_pkey_new($options);
+		$pkey = null;
 		if ($privateKey) {
 			$pkey = \openssl_pkey_get_private($privateKey, $passphrase);
 			if (!$pkey) {
@@ -144,8 +142,8 @@ class Certificate
 		if ($csr) {
 			$this->x509 = \openssl_csr_sign(
 				$csr,
-				\file_get_contents(__DIR__ . '/snappymail.crt'),
-				\file_get_contents(__DIR__ . '/snappymail.key'),
+				null,
+				$pkey,
 				$this->days,
 				$options
 			);

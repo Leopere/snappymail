@@ -55,6 +55,9 @@ abstract class IDN
 			$wildcard = '*.';
 			$domain = \substr($domain, 2);
 		}
+		if ('' === $domain) {
+			return '';
+		}
 		$validAscii = false !== \filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME);
 		if ($validAscii && ($toAscii || !\preg_match('/(^|\\.)xn--/i', $domain))) {
 			return $wildcard . ($toAscii ? \strtolower($domain) : $domain);

@@ -17,6 +17,9 @@ $cases = [
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'Security@BOOMPAY.CA', 'Security@boompay.ca', 'ASCII mailbox normalization'],
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'security', 'security', 'domainless login compatibility'],
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'security@', '', 'empty-domain rejection'],
+	[static fn(string $value): string => \SnappyMail\IDN::emailToUtf8($value), 'security@', '', 'empty-domain display rejection'],
+	[static fn(string $value): string => \SnappyMail\IDN::toAscii($value), '', '', 'empty hostname rejection'],
+	[static fn(string $value): string => \SnappyMail\IDN::toAscii($value), '*.', '', 'empty wildcard domain rejection'],
 	[static fn(string $value): string => \SnappyMail\IDN::emailToAscii($value), 'security@' . \str_repeat('a', 64) . '.example', '', 'invalid IDN rejection'],
 ];
 
