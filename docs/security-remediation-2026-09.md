@@ -123,3 +123,19 @@ Final checks passed:
 The tested code, test files, manifest, and lockfile match the workspace byte for
 byte. Production rollout and live acceptance are handled by the existing native
 shipping and deployment hooks; these local checks do not establish deployment.
+
+## Native deployment follow-up
+
+The native delivery attempt created Jenkins build 21 for revision
+`b12494a47ff792ff71bfd42b34513f459beb297c`. Monitoring rejected the build because
+Jenkins advertises `https://jenkins.a250.ca` in metadata while the client sends
+API requests to loopback. The client now accepts that exact advertised origin
+with the expected job and build path. Authenticated requests remain on loopback;
+other origins and paths still fail closed.
+
+Regression coverage exercises new submissions, queued and running releases,
+explicit monitoring resumption, and rejected metadata origins. A live bounded
+resumption accepted build 21 and reached its waiting state. At that observation,
+the build was queued behind `deploy-sign-boompay-ca #17` for `local-image-build`,
+with no acceptance receipt. That build must release the shared lock before the
+SnappyMail build can proceed. No release was resubmitted during diagnosis.

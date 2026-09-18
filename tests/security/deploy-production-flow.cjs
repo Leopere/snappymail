@@ -42,11 +42,12 @@ function runMock(pairOverride = {}, options = {}) {
 	const server = http.createServer((request, response) => {
 		const base = `http://127.0.0.1:${server.address().port}`;
 		const pathname = new URL(request.url, base).pathname;
+		const advertised = options.advertisedBase || base;
 		const parameters = value => [{ parameters: [{ name: 'EXPECTED_REVISION', value }] }];
 		const queue = value => {
 			queueRequests += 1;
-			const item = { task: { url: base + '/job/deploy-snappymail-boompay-ca/' }, actions: parameters(value) };
-			if (!options.existingQueue || queueRequests > 1) item.executable = { number: 42, url: base + '/job/deploy-snappymail-boompay-ca/42/' };
+			const item = { task: { url: advertised + '/job/deploy-snappymail-boompay-ca/' }, actions: parameters(value) };
+			if (!options.existingQueue || queueRequests > 1) item.executable = { number: 42, url: advertised + '/job/deploy-snappymail-boompay-ca/42/' };
 			return item;
 		};
 		if (!/^Basic /.test(request.headers.authorization || '')) {
@@ -55,10 +56,10 @@ function runMock(pairOverride = {}, options = {}) {
 		if (pathname === '/job/deploy-snappymail-boompay-ca/api/json') {
 			const state = {};
 			if (options.existingQueue) state.queueItem = {
-				id: 7, url: options.existingQueueUrl || base + '/queue/item/7/'
+				id: 7, url: options.existingQueueUrl || advertised + '/queue/item/7/'
 			};
 			if (options.existingBuildRevision) state.lastBuild = {
-				number: 42, building: true, url: base + '/job/deploy-snappymail-boompay-ca/42/', actions: parameters(options.existingBuildRevision)
+				number: 42, building: true, url: advertised + '/job/deploy-snappymail-boompay-ca/42/', actions: parameters(options.existingBuildRevision)
 			};
 			return response.end(JSON.stringify(state));
 		}
@@ -77,9 +78,9 @@ function runMock(pairOverride = {}, options = {}) {
 			buildStatusRequests += 1;
 			if (options.transientGet && buildStatusRequests === 1) return response.writeHead(503).end();
 			if (options.existingBuildRevision && buildStatusRequests === 1) {
-				return response.end(JSON.stringify({ number: 42, url: base + '/job/deploy-snappymail-boompay-ca/42/', building: true, actions: parameters(options.existingBuildRevision) }));
+				return response.end(JSON.stringify({ number: 42, url: advertised + '/job/deploy-snappymail-boompay-ca/42/', building: true, actions: parameters(options.existingBuildRevision) }));
 			}
-			return response.end(JSON.stringify({ number: 42, url: base + '/job/deploy-snappymail-boompay-ca/42/', building: false, result: 'SUCCESS', actions: parameters(options.existingBuildRevision || revision) }));
+			return response.end(JSON.stringify({ number: 42, url: advertised + '/job/deploy-snappymail-boompay-ca/42/', building: false, result: 'SUCCESS', actions: parameters(options.existingBuildRevision || revision) }));
 		}
 		if (pathname === '/job/deploy-snappymail-boompay-ca/42/artifact/release/accepted.json') return response.end(JSON.stringify(acceptedReceipt(pairOverride)));
 		response.writeHead(404).end();
@@ -139,6 +140,21 @@ function runMock(pairOverride = {}, options = {}) {
 	assert.strictEqual(resumed.status, 0, resumed.stderr);
 	assert.strictEqual(resumed.triggerCount, 0, 'resuming an existing build must not post another release');
 	assert.match(resumed.stdout, /Resuming SnappyMail Jenkins build #42 monitoring/);
+
+
+	const publicFresh = await runMock({}, { advertisedBase: 'https://jenkins.a250.ca' });
+	assert.strictEqual(publicFresh.status, 0, publicFresh.stderr);
+	assert.strictEqual(publicFresh.triggerCount, 1, 'public metadata must support one new release trigger');
+	for (const options of [{ existingQueue: true }, { existingBuildRevision: revision }, { resume: true }]) {
+		const publicMetadata = await runMock({}, { ...options, advertisedBase: 'https://jenkins.a250.ca' });
+		assert.strictEqual(publicMetadata.status, 0, publicMetadata.stderr);
+		assert.strictEqual(publicMetadata.triggerCount, 0, 'public metadata must attach without another POST');
+	}
+	for (const advertisedBase of ['https://jenkins.a250.ca.evil.test', 'http://jenkins.a250.ca', 'https://jenkins.a250.ca/wrong']) {
+		const rejectedOrigin = await runMock({}, { existingBuildRevision: revision, advertisedBase });
+		assert.notStrictEqual(rejectedOrigin.status, 0, 'unapproved metadata origins and paths must fail closed');
+		assert.strictEqual(rejectedOrigin.triggerCount, 0, 'unapproved metadata must not trigger a release');
+	}
 
 	const mismatch = await runMock({ revision: 'd'.repeat(40) });
 	assert.notStrictEqual(mismatch.status, 0, 'a paired receipt for another revision must fail');

@@ -151,13 +151,20 @@ def has_expected_revision(record: object, revision: str) -> bool:
     return values == [revision]
 
 
+def metadata_url_matches(value: object, expected: str) -> bool:
+    # Jenkins advertises its public root URL even when queried over loopback.
+    # Validate metadata only; all authenticated requests still use the local API.
+    return value in (expected, "https://jenkins.a250.ca" + urlparse(expected).path)
+
+
 def valid_build(record: object, job: str, build: int) -> bool:
     return (isinstance(record, dict) and record.get("number") == build
-            and record.get("url") == job + "/%s/" % build)
+            and metadata_url_matches(record.get("url"), job + "/%s/" % build))
 
 
 def valid_queue_url(value: object, base: str, queue_path: str) -> bool:
-    return isinstance(value, str) and value in {base + queue_path, queue_path, queue_path.lstrip("/")}
+    return isinstance(value, str) and (metadata_url_matches(value, base + queue_path)
+                                      or value in {queue_path, queue_path.lstrip("/")})
 
 
 def queued_item_build(client, base: str, job: str, queue_path: str, revision: str, limit: float) -> int | None:
@@ -165,7 +172,7 @@ def queued_item_build(client, base: str, job: str, queue_path: str, revision: st
     if item.get("cancelled"):
         fail("Jenkins cancelled the SnappyMail queue item")
     task = item.get("task")
-    if not isinstance(task, dict) or task.get("url") != job + "/":
+    if not isinstance(task, dict) or not metadata_url_matches(task.get("url"), job + "/"):
         fail("Jenkins queue item does not belong to the fixed SnappyMail job")
     if not has_expected_revision(item, revision):
         return None
@@ -175,7 +182,7 @@ def queued_item_build(client, base: str, job: str, queue_path: str, revision: st
     if not isinstance(executable, dict) or not isinstance(executable.get("number"), int) or executable["number"] < 1:
         fail("Jenkins queue item has an invalid executable build")
     build = executable["number"]
-    if executable.get("url") != job + "/%s/" % build:
+    if not metadata_url_matches(executable.get("url"), job + "/%s/" % build):
         fail("Jenkins queue item does not resolve to the fixed SnappyMail job")
     return build
 
@@ -198,7 +205,7 @@ def find_existing(client, base: str, job: str, revision: str, limit: float) -> t
     if not isinstance(last, dict) or last.get("building") is not True:
         return None
     build = last.get("number")
-    if not isinstance(build, int) or build < 1 or last.get("url") != job + "/%s/" % build:
+    if not isinstance(build, int) or build < 1 or not metadata_url_matches(last.get("url"), job + "/%s/" % build):
         fail("Jenkins job returned an invalid active build")
     current = object_json(client, job + "/%s/api/json?tree=number,building,url,actions[parameters[name,value]]" % build, limit)
     if not valid_build(current, job, build) or current.get("building") is not True:
@@ -257,7 +264,7 @@ def validate_receipt(receipt: object, revision: str) -> None:
 def monitor(client, job: str, revision: str, build: int, limit: float) -> None:
     def complete():
         status = object_json(client, job + "/%s/api/json" % build, limit)
-        if status.get("url") != job + "/%s/" % build or status.get("number") != build:
+        if not valid_build(status, job, build):
             fail("Jenkins build status does not belong to the fixed SnappyMail job")
         if status.get("building") is True:
             return None
