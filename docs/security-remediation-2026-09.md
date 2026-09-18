@@ -139,3 +139,38 @@ resumption accepted build 21 and reached its waiting state. At that observation,
 the build was queued behind `deploy-sign-boompay-ca #17` for `local-image-build`,
 with no acceptance receipt. That build must release the shared lock before the
 SnappyMail build can proceed. No release was resubmitted during diagnosis.
+
+## Production acceptance
+
+[Jenkins build 27](http://127.0.0.1:16155/job/deploy-snappymail-boompay-ca/27/)
+succeeded on September 18 at 22:38 UTC. Its
+[accepted receipt](http://127.0.0.1:16155/job/deploy-snappymail-boompay-ca/27/artifact/release/accepted.json)
+binds both `mail.boompay.ca` and `mail.nixc.us` to source revision
+`297fc8782a5090b53c7cf050fb46d2472f5e9720` and image
+`ghcr.io/leopere/boompay-snappymail@sha256:5a3f1e0c2183e134cac2c1d088d19e7f5e36c69b8211cf520897376e47e2a099`.
+Both runtime verifications and the cross-site OpenPGP acceptance test passed.
+The release command returned exit code 0 after validating the archived receipt.
+
+The trusted Jenkins build helpers now require the shared S/MIME key to be absent
+from source and image. The previous Trivy exception is removed, and the old
+key-containing Build 6 recovery is retired. The production image passed the
+HIGH/CRITICAL scan and signature verification. This image result does not remove
+the source-only findings documented above.
+
+Deployment exposed two packaging issues. A classifier download failed during
+one attempt; a subsequent Docker probe downloaded all six pinned assets and
+verified their sizes and hashes. The release recipe now checks that packaging
+produced an archive, since PHP previously returned success after Gulp failed.
+The broad `data/` Docker exclusion also hid two public release templates. The
+source exclusion now admits only `data/.htaccess` and `data/README.md`; the
+trusted builder applies the same narrow compatibility rule to the published
+revision. Docker context checks confirmed that runtime data and key fixtures
+remain excluded. The Jenkins regression suite passed all 56 tests.
+
+Independent HTTPS checks verified both branded roots, their configured manifests
+and icons, and both WKD policy endpoints. The public `libs`, `app`, and `openpgp`
+bundles on both sites matched the accepted image byte for byte.
+
+The image still emits an OPcache `zend_jit_status` loading warning. The same
+warning appears in the earlier successful Build 20; this rollout did not
+introduce or resolve it.

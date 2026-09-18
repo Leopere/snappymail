@@ -10,7 +10,9 @@ id_rsa
 *.key
 **/runtime
 **/secrets
-/data
+/data/**
+!/data/.htaccess
+!/data/README.md
 /tmp
 /test-results
 /examples/crypto
