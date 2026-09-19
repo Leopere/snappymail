@@ -16,6 +16,8 @@ id_rsa
 /tmp
 /test-results
 /examples/crypto
+**/__pycache__
+**/*.pyc
 **/.env
 **/.env.*
 **/*.age

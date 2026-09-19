@@ -7,7 +7,7 @@ const replace = require('gulp-replace');
 const eol = require('gulp-eol');
 const filter = require('gulp-filter');
 const expect = require('gulp-expect-file');
-const gcmq = require('gulp-group-css-media-queries');
+const { gulpGroupMediaQueries: gcmq } = require('./group-media-queries');
 const less = require('gulp-less');
 
 const { config } = require('./config');

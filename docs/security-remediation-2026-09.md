@@ -174,3 +174,160 @@ bundles on both sites matched the accepted image byte for byte.
 The image still emits an OPcache `zend_jit_status` loading warning. The same
 warning appears in the earlier successful Build 20; this rollout did not
 introduce or resolve it.
+
+## September 19 review
+
+The review started from Jenkins `boompay-daily-security-report/11`
+(2026-09-19T18:07Z, 68 agent-brief tasks). Its SnappyMail rows came from
+`snappymail-brandable@40ec3a74`, a private repository whose `master` is 36
+commits behind the deployed `Leopere/snappymail` `master` (`10a44bb7`) and
+carries one unrelated `.gitignore` commit. The deploy job
+`deploy-snappymail-boompay-ca` and the trusted image builder both read
+`git@github.com:Leopere/snappymail.git`, so the daily report was describing a
+tree that is not built or served, while the public repository that is deployed
+had no secret scan at all.
+
+`boompay-security` now inventories `snappymail` at
+`https://github.com/Leopere/snappymail.git` (`master`) and no longer exempts
+`snappymail/v/0.0.0/app/libraries/snappymail/smime/snappymail.key` from the
+tracked-secret contract; the key was removed on September 18, so its return
+must surface as a finding. The scanner's 127 unit tests pass with the new
+inventory. `snappymail-brandable` should be archived once nothing else reads it.
+
+### Finding dispositions
+
+A local Trivy 0.68.2 run with the scanner's exact scanners, severities, and
+skip lists established the real baseline for `10a44bb7`: two unfixed high
+`image-size` advisories, three medium advisories (`ajv` 6.12.6 and 8.16.0,
+`decode-uri-component` 0.2.2), no secrets, and `DS002` on
+`.docker/release/Dockerfile` and `.docker/release/Dockerfile.assets`.
+
+- T025, T026 (`image-size` CVE-2025-71329/71330, no patched release): removed.
+  `less` moves from 4.2.0 to 4.9.1, which depends on `probe-image-size`
+  instead. No `.less` source uses `image-size()`, `image-width()`, or
+  `image-height()`.
+- T027, T028, T035 (`brace-expansion`), T029–T032 (`flatted`), T033 (`tmp`),
+  T034 (`lodash`), T036, T042 (`js-yaml`), T041 (`serialize-javascript`):
+  already fixed on September 18; stale report rows.
+- T037, T039, T040 (development Dockerfile `DS-0002`, `DS-0017`, `DS-0029`):
+  already fixed on September 18; stale report rows.
+- T038 (`DS-0002` on the production Dockerfile) plus the same rule on
+  `Dockerfile.assets`: open and accepted. The entrypoint needs root to own the
+  persistent volume and stage managed configuration before `supervisord`
+  starts nginx and PHP-FPM as `www-data`. Both stay visible; nothing is
+  suppressed.
+- T043 (`examples/crypto/smime.key`), T044 (demo-account private key), T045
+  (`smime/snappymail.key`): already removed on September 18; stale rows.
+- T059 (five medium advisories): the `lodash` mediums left with 4.18.1;
+  `ajv` is pinned to 6.14.0 for the ESLint 6/7 cores and 8.18.0 for ESLint 7's
+  `table` formatter through path-scoped resolutions; `decode-uri-component`
+  left with its whole `css@2` / `source-map-resolve` chain when
+  `gulp-group-css-media-queries` was replaced.
+- T058 (`openpgpkey.boompay.ca` without HSTS): the WKD Traefik router only
+  matches `/.well-known/openpgpkey/`, so `GET /` receives Traefik's built-in
+  19-byte `404 page not found`, which carries Go's `nosniff` header and no
+  HSTS; the WKD paths themselves send HSTS. The router is defined by the
+  `boompay-vps-infra-l2` production controller, not this repository. A
+  catch-all router for the `openpgpkey.` hosts pointed at the application,
+  which answers unknown paths with the full header set, would close it.
+- T001–T024, T046–T057, T060–T068: other repositories, hosts, and controller
+  leftover roots; outside this repository.
+
+### Dependency changes
+
+- `less` 4.9.1 also corrects generated CSS. Less 4.2.0 evaluated the authored
+  `min(360px, calc(100vw - 24px))` to `360px` and
+  `max(8px, env(safe-area-inset-bottom))` to `8px`; 4.9.1 emits the
+  expressions as written. Three declarations in `app.css` change; `admin.css`
+  and `boot.css` are unchanged.
+- `gulp-group-css-media-queries` (2016, `css@2.2.4`, `source-map-resolve`,
+  `decode-uri-component`, `atob`, `urix`, `resolve-url`) is replaced by
+  `tasks/group-media-queries.js` on `postcss` 8.5.28. It keeps the retired
+  plugin's ordering: root rules, `min-width` queries ascending, `max-width`
+  queries descending, ranged and other queries in first-appearance order.
+  Minified `app.min.css` and `admin.min.css` produced from the same input are
+  byte-identical to the previous plugin's output.
+- Trivy after the changes: no vulnerabilities, no secrets; only the two
+  accepted `DS002` rows remain.
+
+### Session cookies behind the proxy
+
+A live probe of `https://mail.boompay.ca/?/AppData/0/12345/` returned the
+30-day `smtoken` connection cookie with `HttpOnly; SameSite=Strict` and no
+`Secure` attribute. TLS terminates at Traefik, nginx forwards plain HTTP to
+PHP-FPM, and `SnappyMail\Cookies` derives `Secure` only from
+`$_SERVER['HTTPS']`, which `include.php` set from `REQUEST_SCHEME` alone.
+`MailSo\Base\Http::IsSecure()` already trusted `X-Forwarded-Proto` and
+`X-Forwarded-Ssl`, so the two server-side views of the same request
+disagreed. Edge HSTS (`includeSubDomains; preload`) limited the exposure to a
+browser's first visit before the policy is cached.
+
+`SnappyMail\HTTP\Scheme::normalize()` now derives `HTTPS` from `HTTPS`,
+`REQUEST_SCHEME`, the first hop of `X-Forwarded-Proto`, or `X-Forwarded-Ssl`,
+and `include.php` applies it before the HSTS decision. Session and connection
+cookies, the `samesite` attribute rewritten into `Index.html`, and the admin
+integrity self-URL all follow. Traefik's `security-headers` middleware uses
+`forceSTSHeader`, so the PHP HSTS header is replaced rather than duplicated.
+`tests/php/proxy-https-scheme.php` covers the header combinations, chained
+hops, and the agreement between `Scheme`, `Cookies`, and `Http::IsSecure()`.
+The dev compose stack has no proxy and is unchanged. The first release
+after this change must show `Secure` on the `smtoken` cookie for the same probe.
+
+### Source gate
+
+`scripts/verify.sh`, which native shipping runs before every push, now ends
+with `trivy fs --scanners vuln,secret --severity HIGH,CRITICAL
+--ignore-unfixed --exit-code 1` over the source tree, skipping `.git`,
+`node_modules`, `tmp`, `test-results`, and build output. It blocks tracked
+private keys and fixable high or critical dependency advisories; unfixed
+advisories and the accepted root-user misconfiguration stay with the daily
+report. A generated 2048-bit RSA key placed in a scratch directory made the
+same command exit 1; the clean tree finishes in about four seconds. Trivy is
+required; `SNAPPYMAIL_SKIP_TRIVY=1` bypasses the gate with a warning on hosts
+without it.
+
+### Repository hygiene
+
+Native shipping had committed `scripts/__pycache__/jenkins-release.cpython-314.pyc`
+to the public repository. The file is untracked, and `__pycache__/` and
+`*.pyc` are ignored by Git and excluded from Docker build contexts.
+
+### Production release blocker
+
+`deploy-snappymail-boompay-ca` builds 30 through 33 (September 19, 16:59 to
+18:10 UTC) all failed at the same step after the image was verified, pulled,
+and tagged locally: `docker save | ssh docker load` onto the edge node
+reported `failed to ingest blobs/sha256/02804ee0…: mkdir
+/var/lib/docker/containerd/io.containerd.content.v1.content/ingest/…: no
+space left on device`. That path does not exist on the local OrbStack daemon,
+whose data volume had 285 GiB free, so the full content store is the
+`cisl2-edge-01` daemon. Build 29 failed differently (`SnappyMail task
+container did not retain the requested image ID`). The stack script tags a
+new `cisl2/migrated-snappymail:sha-<revision>-image-<digest>` runtime image on
+every release and has no retention step, so repeated releases accumulate on
+the edge until its disk fills. Port 22 on the edge node timed out from this
+workstation, and `cisl2-base` has no tracked Docker image prune path, so the
+cleanup and a retention rule belong to that controller repository. Until then
+every SnappyMail release, including this one, stops at activation with the
+pushed revision intact.
+
+### Reviewed and left unchanged
+
+- The admin panel answers at `https://mail.boompay.ca/?admin` and
+  `https://mail.nixc.us/?admin`, protected by the generated admin password. The
+  RockSign plugin is managed through Admin → Packages, so it was not disabled
+  here. Turning `allow_admin_panel` off or restricting `admin_panel_host` in
+  the persistent `application.ini` remains the stronger posture.
+- nginx maps `X-Real-IP` to `REMOTE_ADDR` without a trusted-proxy list. The
+  listener is reachable only from the Traefik overlay network, where Traefik
+  always sets the header; publishing port 8888 directly would make auth logs
+  and fail2ban spoofable.
+- `deploy/snappymail-stack.yml` is a reference copy with placeholder MariaDB
+  credentials that the OpenPGP regression suite reads for the WKD router
+  contract; the live stack is rendered by the production controller.
+- Live headers on both mail hosts: CSP with nonce, `frame-ancestors 'none'`,
+  HSTS with `includeSubDomains; preload`, `nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy`. OpenPGP.js is 6.3.1. GnuPG invocations use fixed binary
+  names and argument arrays; the one shell string uses `escapeshellarg`.
+- Tracked `examples/crypto/*-private.asc` are upstream SnappyMail demo keys,
+  excluded from the Docker context and not flagged by Trivy.

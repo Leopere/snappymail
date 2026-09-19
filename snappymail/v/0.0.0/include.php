@@ -118,12 +118,10 @@ if (!isset($_SERVER['HTTP_USER_AGENT'])) {
 	$_SERVER['HTTP_USER_AGENT'] = '';
 }
 
-if (empty($_SERVER['HTTPS']) || 'off' === $_SERVER['HTTPS']) {
-	unset($_SERVER['HTTPS']);
-}
-if (isset($_SERVER['REQUEST_SCHEME']) && 'https' === $_SERVER['REQUEST_SCHEME']) {
-	$_SERVER['HTTPS'] = 'on';
-}
+// TLS terminates at the reverse proxy, which forwards plain HTTP to PHP-FPM.
+// Mirroring the trusted proxy headers into HTTPS makes SnappyMail\Cookies mark
+// session and connection tokens Secure and keeps HSTS on proxied responses.
+SnappyMail\HTTP\Scheme::normalize($_SERVER);
 if (isset($_SERVER['HTTPS']) && !headers_sent()) {
 	header('Strict-Transport-Security: max-age=31536000');
 }

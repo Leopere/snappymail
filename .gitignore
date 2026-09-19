@@ -45,3 +45,7 @@ id_rsa
 *.key
 runtime/
 secrets/
+
+# Compiled Python bytecode from the release helpers
+__pycache__/
+*.pyc
