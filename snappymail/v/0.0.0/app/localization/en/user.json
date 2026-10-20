@@ -179,7 +179,7 @@
 		"BUTTON_FORWARD_AS_ATTACHMENT": "Forward as attachment",
 		"BUTTON_EDIT_AS_NEW": "Edit as New",
 		"BUTTON_SHOW_IMAGES": "Display external images",
-		"BUTTON_NOTIFY_READ_RECEIPT": "The sender has asked to be notified when you read this message.",
+		"BUTTON_NOTIFY_READ_RECEIPT": "Send read receipt",
 		"BUTTON_IN_NEW_WINDOW": "View in separate window",
 		"BUTTON_THREAD_LIST": "Thread list",
 		"BUTTON_THREAD_PREV": "Previous",

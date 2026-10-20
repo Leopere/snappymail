@@ -668,7 +668,10 @@ class Actions
 						'requestReadReceipt',
 						$oConfig->Get('defaults', 'request_read_receipt', true)
 					);
-					$aResult['requestDsn'] = (bool) $oSettings->GetConf('requestDsn', false);
+					$aResult['requestDsn'] = (bool) $oSettings->GetConf(
+						'requestDsn',
+						$oConfig->Get('defaults', 'request_delivery_receipt', true)
+					);
 					$aResult['requireTLS'] = (bool) $oSettings->GetConf('requireTLS', false);
 					$aResult['pgpSign'] = (bool) $oSettings->GetConf('pgpSign', false);
 					$aResult['pgpEncrypt'] = (bool) $oSettings->GetConf('pgpEncrypt', false);

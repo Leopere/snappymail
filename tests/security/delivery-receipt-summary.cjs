@@ -3,6 +3,7 @@
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '../..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -14,17 +15,39 @@ const appDataActions = read('snappymail/v/0.0.0/app/libraries/RainLoop/Actions.p
 const actions = read('snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Messages.php');
 const messageModel = read('dev/Model/Message.js');
 const messageView = read('dev/View/User/MailBox/MessageView.js');
+const messageTemplate = read('snappymail/v/0.0.0/app/templates/Views/User/MailMessageView.html');
 const folderStore = read('dev/Stores/User/Folder.js');
 const view = read('dev/View/User/MailBox/MessageList.js');
 const template = read('snappymail/v/0.0.0/app/templates/Views/User/MailMessageList.html');
 const boomPayManifest = read('snappymail/v/0.0.0/static/brand/boompay-manifest.json');
 const mrcManifest = read('snappymail/v/0.0.0/static/brand/mrc-manifest.json');
+assert.match(actions, /\$aRequestHash\[1\] == \$oInfo->etag\s*&& \$oParams->sFolderName !== \$oParams->sDeliveryReceiptSentFolder/,
+	'cached Sent responses must not bypass incoming receipt correlation');
+for (const keyword of ['$deliveryprocessed', '$deliveryprocessedv2', '$readprocessed', '$readprocessedv2']) {
+	assert(folderStore.includes(`'${keyword}'`), 'receipt bookkeeping keywords must stay hidden from user tags');
+}
+assert.match(read('.docker/release/Dockerfile'), /RUN node tests\/security\/delivery-receipt-summary\.cjs[\s\S]*RUN php release\.php/,
+	'Jenkins must run receipt regressions before packaging the release');
 
 assert.match(applicationConfig, /'request_read_receipt'\s*=>\s*array\(true,/,
 	'read-receipt requests must be enabled in the administrator-controlled product defaults');
 assert.match(appDataActions,
 	/GetConf\(\s*'requestReadReceipt',\s*\$oConfig->Get\('defaults', 'request_read_receipt', true\)\s*\)/,
 	'an unset user preference must inherit the administrator default while an explicit false still wins');
+
+assert.match(applicationConfig, /'request_delivery_receipt'\s*=>\s*array\(true,/,
+	'delivery status requests must be enabled in the administrator-controlled product defaults');
+assert.match(appDataActions,
+	/GetConf\(\s*'requestDsn',\s*\$oConfig->Get\('defaults', 'request_delivery_receipt', true\)\s*\)/,
+	'an unset delivery preference must inherit the administrator default while an explicit false still wins');
+assert.match(messageTemplate, /<button type="button" class="readReceipt btn"[^>]*click: readReceipt/,
+	'sending an incoming read receipt must require an explicit button click');
+assert.equal((messageTemplate.match(/click: readReceipt/g) || []).length, 1,
+	'the message view must expose only one explicit read-receipt action');
+assert.equal((messageView.match(/Remote\.request\('SendReadReceiptMessage'/g) || []).length, 1,
+	'the sole read-receipt send request must stay inside the explicit action');
+assert.match(messageView, /readReceipt\(\) \{[\s\S]*?Remote\.request\('SendReadReceiptMessage'/,
+	'marking a message read or loading its body must not automatically send a receipt');
 
 assert.match(params, /\$bHideDeliveryReceipts = false/,
 	'receipt hiding must be an explicit message-list behavior');
@@ -59,8 +82,8 @@ assert.match(mailClient, /DELIVERY_RECEIPT_PROCESSED_FLAG/,
 	'a parsed raw delivery receipt must be marked as processed');
 assert.match(mailClient, /READ_RECEIPT_PROCESSED_FLAG[\s\S]*?READ_SUCCESS_FLAG/,
 	'a parsed MDN must persist separate processed and read-success keywords');
-assert.match(mailClient, /new SequenceSet\(\$aPendingReceiptUids\)[\s\S]*?\$sProcessedFlag/,
-	'malformed and unmatched reports must not be reparsed on every Inbox load');
+assert.match(mailClient, /new SequenceSet\(\\array_values\(\\array_unique\(\$aProcessedReceiptUids\)\)\)/,
+	'only completed reports may persist a processed keyword');
 assert.match(mailClient, /DecodeEncodingValue/,
 	'internationalized MDN bodies must be decoded before their fields are parsed');
 assert.match(mailClient, /MessageFlag::SEEN/,
@@ -108,4 +131,17 @@ assert.match(view, /showMessageReceipts\(message, event\)[\s\S]*?Content-Type mu
 assert.doesNotMatch(`${boomPayManifest}\n${mrcManifest}`, /\/snappymail\/v\/0\.0\.0\//,
 	'PWA manifest icons must resolve beside the released versioned manifest');
 
+const test = path.join(root, 'tests/php/delivery-receipt-linking.php');
+const options = { cwd: root, encoding: 'utf8' };
+let result = spawnSync(process.env.PHP_BINARY || 'php', [test], options);
+if (result.error?.code === 'ENOENT') {
+	result = spawnSync('docker', ['compose', 'exec', '-T', '-e',
+		'SNAPPYMAIL_SOURCE_ROOT=/snappymail/snappymail', 'snappymail', 'php'], {
+		...options, input: fs.readFileSync(test, 'utf8')
+	});
+}
+process.stdout.write(result.stdout || '');
+process.stderr.write(result.stderr || '');
+if (result.error) throw result.error;
+assert.equal(result.status, 0, 'Executable receipt-linking regressions must pass');
 console.log('Per-message delivery and read receipt contract checks passed');

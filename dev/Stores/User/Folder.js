@@ -42,9 +42,11 @@ ignoredKeywords = [
 	// Others
 	'$deliverylinked',
 	'$deliveryprocessed',
+	'$deliveryprocessedv2',
 	'$deliverysuccess',
 	'$readlinked',
 	'$readprocessed',
+	'$readprocessedv2',
 	'$readsuccess',
 	'$readreceipt',
 	'$notdelivered'

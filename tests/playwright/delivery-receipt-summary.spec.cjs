@@ -128,6 +128,12 @@ test('a displayed MDN marks and opens its exact Sent message', async ({ browser 
 		expect(messageId).toMatch(/^<[^<>\r\n]+>$/);
 
 		await login(bPage, accounts.b);
+		const receiptRequests = [];
+		bPage.on('request', request => {
+			if ('POST' === request.method() && (request.postData() || '').includes('SendReadReceiptMessage')) {
+				receiptRequests.push(request);
+			}
+		});
 		await bPage.goto(`${baseURL}/#/mailbox/INBOX`);
 		const receivedRow = await waitForRow(bPage, subject, 30);
 		await receivedRow.locator('.subjectParent').click();
@@ -136,6 +142,7 @@ test('a displayed MDN marks and opens its exact Sent message', async ({ browser 
 		subject, { timeout: 60000 });
 		const receiptPrompt = bPage.locator('#V-MailMessageView .readReceipt:visible');
 		await expect(receiptPrompt).toBeVisible({ timeout: 30000 });
+		expect(receiptRequests).toHaveLength(0);
 		const receiptResponse = bPage.waitForResponse(response =>
 			'POST' === response.request().method()
 				&& (response.request().postData() || '').includes('SendReadReceiptMessage'),
@@ -147,11 +154,8 @@ test('a displayed MDN marks and opens its exact Sent message', async ({ browser 
 
 		let readRow;
 		for (let attempt = 0; attempt < 15; attempt += 1) {
-			await aPage.goto(`${baseURL}/#/mailbox/INBOX`);
-			await aPage.locator('.messageList').waitFor({ state: 'visible' });
-			await reloadList(aPage);
-			await expect(findRow(aPage, `Return Receipt (displayed) - ${subject}`)).toHaveCount(0);
 			await aPage.goto(`${baseURL}/#/mailbox/Sent`);
+			await reloadList(aPage);
 			readRow = findRow(aPage, subject);
 			if (await readRow.locator('.readSuccessIcon').isVisible().catch(() => false)) {
 				break;
@@ -181,7 +185,7 @@ test('a displayed MDN marks and opens its exact Sent message', async ({ browser 
 			url: ko.dataFor(row).viewRaw()
 		}));
 		expect(rawState.flags).toContain('\\seen');
-		expect(rawState.flags).toContain('$readprocessed');
+		expect(rawState.flags).toContain('$readprocessedv2');
 		const rawResponse = await aPage.request.get(new URL(rawState.url, baseURL).href);
 		expect(rawResponse.ok()).toBe(true);
 		const raw = await rawResponse.text();

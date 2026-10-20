@@ -333,6 +333,7 @@ Values:
 				'mail_reply_same_folder' => array(false),
 				'msg_default_action'     => array(1, '1 - reply, 2 - reply all'),
 				'request_read_receipt'   => array(true, 'Request a read receipt on newly composed messages by default'),
+				'request_delivery_receipt' => array(true, 'Request delivery status on newly composed messages when the SMTP server supports DSN'),
                 'collapse_blockquotes'   => array(true),
                 'allow_spellcheck'       => array(false)
 			),

@@ -32,9 +32,9 @@ class MailClient
 		'HEADER Content-Type "multipart/report" SUBJECT "Successful Mail Delivery Report"';
 	private const READ_RECEIPT_SEARCH =
 		'HEADER Content-Type "disposition-notification"';
-	private const DELIVERY_RECEIPT_PROCESSED_FLAG = '$DeliveryProcessed';
+	private const DELIVERY_RECEIPT_PROCESSED_FLAG = '$DeliveryProcessedV2';
 	private const DELIVERY_SUCCESS_FLAG = '$DeliverySuccess';
-	private const READ_RECEIPT_PROCESSED_FLAG = '$ReadProcessed';
+	private const READ_RECEIPT_PROCESSED_FLAG = '$ReadProcessedV2';
 	private const READ_SUCCESS_FLAG = '$ReadSuccess';
 
 	private \MailSo\Imap\ImapClient $oImapClient;
@@ -863,12 +863,15 @@ class MailClient
 		}
 
 		$aSuccessfulSentUids = array();
-		$bProcessed = false;
+		$aProcessedReceiptUids = array();
 		try {
 			if ($bCanProcess
 				&& $this->oImapClient->FolderSelect($sSentFolderName)->IsFlagSupported($sSuccessFlag)
 			) {
-				foreach ($fMessageIds($aPendingReceiptUids) as $sMessageId) {
+				$aMessageIds = $fMessageIds($aPendingReceiptUids);
+				// Malformed reports cannot be linked; valid unmatched reports must remain retryable.
+				$aProcessedReceiptUids = \array_diff($aPendingReceiptUids, \array_keys($aMessageIds));
+				foreach ($aMessageIds as $iReceiptUid => $sMessageId) {
 					$this->oImapClient->FolderExamine($sSentFolderName);
 					$aSentUids = $this->oImapClient->MessageSearch(
 						'HEADER Message-ID ' . \MailSo\Imap\SearchCriterias::escapeSearchString(
@@ -877,14 +880,24 @@ class MailClient
 						)
 					);
 					if ($aSentUids) {
-						$aSuccessfulSentUids = \array_merge($aSuccessfulSentUids, $aSentUids);
+						// IMAP HEADER searches match substrings, not exact field values.
+						foreach ($this->oImapClient->Fetch(array(
+							FetchType::UID,
+							FetchType::BuildBodyCustomHeaderRequest([MimeHeader::MESSAGE_ID])
+						), (string) new SequenceSet($aSentUids), true) as $oSentResponse) {
+							$oHeaders = new \MailSo\Mime\HeaderCollection($oSentResponse->GetHeaderFieldsValue());
+							if ($sMessageId === \trim($oHeaders->ValueByName(MimeHeader::MESSAGE_ID))) {
+								$aSuccessfulSentUids[] = (int) $oSentResponse->GetFetchValue(FetchType::UID);
+								$aProcessedReceiptUids[] = $iReceiptUid;
+							}
+						}
 					}
 				}
 			}
-			$bProcessed = true;
 		} catch (\Throwable $oException) {
 			$this->logException($oException, \LOG_WARNING, $sLogLabel . ' receipt linking');
 			$aSuccessfulSentUids = array();
+			$aProcessedReceiptUids = array();
 		}
 
 		if ($aSuccessfulSentUids) {
@@ -894,10 +907,10 @@ class MailClient
 				$sSuccessFlag
 			);
 		}
-		if ($bProcessed && $bCanProcess) {
+		if ($aProcessedReceiptUids) {
 			$this->MessageSetFlag(
 				$sFolderName,
-				new SequenceSet($aPendingReceiptUids),
+				new SequenceSet(\array_values(\array_unique($aProcessedReceiptUids))),
 				$sProcessedFlag
 			);
 		}
@@ -1092,13 +1105,17 @@ class MailClient
 		$oMessageCollection->Search = $sSearch;
 		$oMessageCollection->ThreadUid = $oParams->iThreadUid;
 //		$oMessageCollection->Filtered = '' !== $this->oImapClient->Settings->search_filter;
-		if ($oParams->bHideDeliveryReceipts) {
+		// Receipt correlation must also run when opening Sent directly or showing raw reports.
+		if (0 === \strcasecmp($oParams->sFolderName, 'INBOX')
+			|| (\strlen($oParams->sDeliveryReceiptSentFolder)
+				&& $oParams->sFolderName === $oParams->sDeliveryReceiptSentFolder)
+		) {
 			$this->PrepareDeliveryReceipts(
-				$oParams->sFolderName,
+				'INBOX',
 				$oParams->sDeliveryReceiptSentFolder
 			);
 			$this->PrepareReadReceipts(
-				$oParams->sFolderName,
+				'INBOX',
 				$oParams->sDeliveryReceiptSentFolder
 			);
 		}

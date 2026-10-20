@@ -74,7 +74,7 @@ trait Messages
 		if ($oSettingsLocal instanceof \RainLoop\Settings) {
 			$oParams->bHideDeleted = !empty($oSettingsLocal->GetConf('HideDeleted', 1));
 			$oParams->sDeliveryReceiptSentFolder = (string) $oSettingsLocal->GetConf('SentFolder', '');
-			if ($oParams->bHideDeliveryReceipts && !\strlen($oParams->sDeliveryReceiptSentFolder)) {
+			if (!\strlen($oParams->sDeliveryReceiptSentFolder)) {
 				foreach ($this->MailClient()->Folders('', '*', false) ?: [] as $oFolder) {
 					if ($oFolder->Selectable() && 'sent' === $oFolder->Role()) {
 						$oParams->sDeliveryReceiptSentFolder = $oFolder->FullName;
@@ -93,7 +93,10 @@ trait Messages
 			$oInfo = $this->ImapClient()->FolderStatusAndSelect($oParams->sFolderName);
 			$aRequestHash = \explode('-', $sHash);
 			$sNewHash = $oParams->hash() . '-' . $oInfo->etag;
-			if ($aRequestHash[1] == $oInfo->etag) {
+			// New Inbox receipts can change Sent flags even when its old etag matches.
+			if ($aRequestHash[1] == $oInfo->etag
+				&& $oParams->sFolderName !== $oParams->sDeliveryReceiptSentFolder
+			) {
 				$this->verifyCacheByKey($sNewHash);
 			}
 			$sHash = $sNewHash;
