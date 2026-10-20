@@ -62,6 +62,7 @@ const smartTree = (subscribed = true, topLevel = false) => {
 const context = {
 	module: { exports: {} },
 	getFolderFromCacheList: name => folderMap.get(name),
+	getFolderInboxName: () => 'INBOX',
 	setExpandedFolder: (name, value) => expanded.push([name, value]),
 	loadFolders: callback => {
 		install([smartTree()]);
@@ -134,6 +135,26 @@ const { SMART_ARCHIVE_FOLDER_NAMES, setupSmartArchiveFolders } = context.module.
 	assert.equal(subscribeCalls.length, SMART_ARCHIVE_FOLDER_NAMES.length + 2,
 		'every required container and destination must be subscribed');
 	assert(subscribeCalls.every(call => 'FolderSubscribe' === call.action && 1 === call.subscribe));
+
+	createCalls = [];
+	install([makeFolder('Inbox', 'INBOX'), smartTree()]);
+	context.FolderUserStore.archiveFolder = () => 'INBOX';
+	result = await setupSmartArchiveFolders();
+	assert.equal(result.folders.Newsletters, 'Archive.Smart.Newsletters',
+		'a mistaken Inbox archive mapping must not create Smart folders underneath Inbox');
+	assert.equal(createCalls.length, 0);
+	context.FolderUserStore.archiveFolder = () => 'Archive';
+	for (const unsafe of ['Trash', 'Spam']) {
+		context.FolderUserStore.trashFolder = () => 'Trash';
+		context.FolderUserStore.spamFolder = () => 'Spam';
+		const child = makeFolder('OldArchive', `${unsafe}.OldArchive`, unsafe);
+		install([makeFolder(unsafe, unsafe, '', [child]), smartTree()]);
+		context.FolderUserStore.archiveFolder = () => child.fullName;
+		result = await setupSmartArchiveFolders();
+		assert.equal(result.folders.Newsletters, 'Archive.Smart.Newsletters',
+			'Smart Archive must not reuse an archive inside Trash or Spam');
+	}
+	context.FolderUserStore.archiveFolder = () => 'Archive';
 
 	const accountSettings = read('snappymail/v/0.0.0/app/libraries/RainLoop/Actions/Accounts.php'),
 		userSettings = read('snappymail/v/0.0.0/app/libraries/RainLoop/Actions/User.php'),

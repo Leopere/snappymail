@@ -10,6 +10,7 @@ RUN yarn install --frozen-lockfile --network-timeout 600000 --network-concurrenc
 RUN apk add --no-cache php82-mbstring
 COPY . .
 RUN PHP_BINARY=php82 node tests/security/delivery-receipt-summary.cjs
+RUN node tests/security/newsletter-archive.cjs && node tests/security/smart-archive-setup.cjs
 # Patch release.php with hotfix from: https://github.com/xgbstar1/snappymail-docker/blob/main/Dockerfile, so that release.php doesn't fail with error
 RUN sed -i 's_^if.*rename.*snappymail.v.0.0.0.*$_if (!!system("mv snappymail/v/0.0.0 snappymail/v/{$package->version}")) {_' cli/release.php  || true
 RUN php release.php

@@ -113,7 +113,9 @@ addComputablesTo(MessagelistUserStore, {
 
 	isTrashFolder: () => FolderUserStore.trashFolder() === MessagelistUserStore().folder,
 
-	archiveAllowed: () => ![UNUSED_OPTION_VALUE, MessagelistUserStore().folder].includes(FolderUserStore.archiveFolder())
+	archiveAllowed: () => UNUSED_OPTION_VALUE !== FolderUserStore.archiveFolder()
+		&& (MessagelistUserStore().folder === getFolderInboxName()
+			|| MessagelistUserStore().folder !== FolderUserStore.archiveFolder())
 		&& !MessagelistUserStore.isDraftFolder(),
 
 	canMarkAsSpam: () => !(UNUSED_OPTION_VALUE === FolderUserStore.spamFolder()

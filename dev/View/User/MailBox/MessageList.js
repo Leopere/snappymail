@@ -459,7 +459,7 @@ export class MailMessageList extends AbstractViewRight {
 
 	moveMessageToFolderType(message, folderType) {
 		const uids = this.messageUidsWithSubMails(message);
-		uids.size && rl.app.moveMessagesToFolderType(folderType, uids.folder, uids);
+		uids.size && rl.app.moveMessagesToFolderType(folderType, uids.folder, uids, false, [message]);
 	}
 
 	queueMessageMove(message, row, folderType, text, setDeleted = false, permanentDelete = false) {

@@ -14,6 +14,14 @@ The governing rule is:
 
 Archive remains the fast "done with this" action.
 
+When you archive an Inbox message with a `List-Unsubscribe` header, it moves
+to the visible Newsletters folder in the existing Smart hierarchy. You can
+review and clear that folder periodically. This action does not follow the
+unsubscribe link or schedule automatic deletion. Threads stay together.
+Mixed selections and selections with unknown off-page messages use ordinary
+Archive. Archive never targets the source folder or deletes mail; if a safe
+destination is unavailable, choose an archive folder before moving the mail.
+
 Smart Archive is a separate review and maintenance flow. Its four durable destinations are:
 
 - `Archive.Smart.Finance`

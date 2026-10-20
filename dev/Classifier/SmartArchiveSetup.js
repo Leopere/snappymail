@@ -1,4 +1,4 @@
-import { getFolderFromCacheList } from 'Common/Cache';
+import { getFolderFromCacheList, getFolderInboxName } from 'Common/Cache';
 
 import { loadFolders, setExpandedFolder } from 'Model/FolderCollection';
 
@@ -33,6 +33,16 @@ const
 	findChild = (parentName, name) => allFolders().find(folder =>
 		folder.parentName === parentName && normalizeName(folder.name?.()) === normalizeName(name)
 	),
+
+	isUnsafeArchive = folder => {
+		const unsafe = [getFolderInboxName(), FolderUserStore.spamFolder?.(), FolderUserStore.trashFolder?.()];
+		for (let parent = folder; parent; parent = getFolderFromCacheList(parent.parentName)) {
+			if (unsafe.includes(parent.fullName)) {
+				return true;
+			}
+		}
+		return false;
+	},
 
 	createFolder = async (name, parent = '') => {
 		try {
@@ -80,7 +90,11 @@ const
 			created = false;
 
 		if (!smartName) {
-			archive = getFolderFromCacheList(FolderUserStore.archiveFolder()) || findRoot('Archive');
+			archive = getFolderFromCacheList(FolderUserStore.archiveFolder());
+			archive = archive && !isUnsafeArchive(archive) ? archive : findRoot('Archive');
+			if (isUnsafeArchive(archive)) {
+				return { complete: false, folders: {} };
+			}
 			archiveName = archive?.fullName || '';
 			if (!archiveName && false !== FolderUserStore.folderList().allow) {
 				archiveName = await createFolder('Archive');
@@ -95,7 +109,7 @@ const
 				}
 			}
 		}
-		if (!smartName) {
+		if (!smartName || isUnsafeArchive(smart)) {
 			return { complete: false, folders: {} };
 		}
 

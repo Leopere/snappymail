@@ -100,10 +100,40 @@ export class AppUser extends AbstractApp {
 	 * @param {string} sFromFolderFullName
 	 * @param {Set} oUids
 	 * @param {boolean=} bDelete = false
+	 * @param {Array=} messages
 	 */
-	moveMessagesToFolderType(iFolderType, sFromFolderFullName, oUids, bDelete) {
+	async moveMessagesToFolderType(iFolderType, sFromFolderFullName, oUids, bDelete, messages = MessagelistUserStore()) {
 		let oMoveFolder = null,
 			nSetSystemFoldersNotification = 0;
+
+		if (FolderType.Archive === iFolderType && sFromFolderFullName === getFolderInboxName()) {
+			const newsletterUids = new Set;
+			messages.forEach(message => {
+				if (message?.folder === sFromFolderFullName && message.unsubsribeLinks?.().length
+					&& oUids.has(message.uid)
+				) {
+					newsletterUids.add(message.uid);
+					message.threads?.().forEach(uid => newsletterUids.add(uid));
+				}
+			});
+			// Keep threads together; mixed or off-page selections use ordinary Archive.
+			if (oUids.size && [...oUids].every(uid => newsletterUids.has(uid))) {
+				const account = AccountUserStore.email(),
+					result = await setupSmartArchiveFolders(),
+					target = result.complete && getFolderFromCacheList(result.folders.Newsletters);
+				if (account !== AccountUserStore.email()) {
+					return;
+				}
+				if (target?.selectable?.() && target.fullName !== sFromFolderFullName
+					&& ![FolderUserStore.spamFolder(), FolderUserStore.trashFolder()].includes(target.fullName)
+				) {
+					MessagelistUserStore.moveMessages(sFromFolderFullName, oUids, target.fullName);
+				} else {
+					showScreenPopup(FolderSystemPopupView, [FolderType.Archive]);
+				}
+				return;
+			}
+		}
 
 		switch (iFolderType) {
 			case FolderType.Junk:
@@ -124,7 +154,7 @@ export class AppUser extends AbstractApp {
 			case FolderType.Archive:
 				oMoveFolder = getFolderFromCacheList(FolderUserStore.archiveFolder());
 				nSetSystemFoldersNotification = iFolderType;
-				bDelete = bDelete || UNUSED_OPTION_VALUE === FolderUserStore.archiveFolder();
+				bDelete = false;
 				break;
 			// no default
 		}
@@ -136,7 +166,7 @@ export class AppUser extends AbstractApp {
 					MessagelistUserStore.moveMessages(sFromFolderFullName, oUids);
 				}
 			]);
-		} else if (oMoveFolder) {
+		} else if (oMoveFolder && oMoveFolder.fullName !== sFromFolderFullName) {
 			MessagelistUserStore.moveMessages(sFromFolderFullName, oUids, oMoveFolder.fullName);
 		} else {
 			showScreenPopup(FolderSystemPopupView, [nSetSystemFoldersNotification]);
