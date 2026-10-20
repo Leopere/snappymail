@@ -26,7 +26,7 @@ assert.match(actions, /\$aRequestHash\[1\] == \$oInfo->etag\s*&& \$oParams->sFol
 for (const keyword of ['$deliveryprocessed', '$deliveryprocessedv2', '$readprocessed', '$readprocessedv2']) {
 	assert(folderStore.includes(`'${keyword}'`), 'receipt bookkeeping keywords must stay hidden from user tags');
 }
-assert.match(read('.docker/release/Dockerfile'), /RUN node tests\/security\/delivery-receipt-summary\.cjs[\s\S]*RUN php release\.php/,
+assert.match(read('.docker/release/Dockerfile'), /RUN apk add --no-cache php82-mbstring[\s\S]*RUN PHP_BINARY=php82 node tests\/security\/delivery-receipt-summary\.cjs[\s\S]*RUN php release\.php/,
 	'Jenkins must run receipt regressions before packaging the release');
 
 assert.match(applicationConfig, /'request_read_receipt'\s*=>\s*array\(true,/,

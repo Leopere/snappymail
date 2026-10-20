@@ -127,7 +127,12 @@ final class ReceiptImap extends ImapClient
 
 function listFolder(ReceiptImap $imap, string $folder = 'Sent') : void
 {
-	$client = new MailClient;
+	$client = new class extends MailClient {
+		public function logException(Throwable $exception, int $type = LOG_NOTICE, string $name = '') : void
+		{
+			throw $exception;
+		}
+	};
 	(new ReflectionProperty(MailClient::class, 'oImapClient'))->setValue($client, $imap);
 	$params = new MessageListParams;
 	$params->sFolderName = $folder;
