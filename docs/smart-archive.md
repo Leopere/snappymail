@@ -14,10 +14,14 @@ The governing rule is:
 
 Archive remains the fast "done with this" action.
 
-When you archive an Inbox message with a `List-Unsubscribe` header, it moves
+When you archive an Inbox message containing “unsubscribe” in its available
+subject, preview, body text, or HTML (including a footer link), it moves
 to the visible Newsletters folder in the existing Smart hierarchy. You can
 review and clear that folder periodically. This action does not follow the
 unsubscribe link or schedule automatic deletion. Threads stay together.
+The `List-Unsubscribe` header also qualifies, but is not required. This check
+uses content already loaded in the client; it does not fetch unopened bodies
+or create body-based server filters.
 Mixed selections and selections with unknown off-page messages use ordinary
 Archive. Archive never targets the source folder or deletes mail; if a safe
 destination is unavailable, choose an archive folder before moving the mail.

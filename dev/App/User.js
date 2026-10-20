@@ -107,9 +107,18 @@ export class AppUser extends AbstractApp {
 			nSetSystemFoldersNotification = 0;
 
 		if (FolderType.Archive === iFolderType && sFromFolderFullName === getFolderInboxName()) {
-			const newsletterUids = new Set;
+			const newsletterUids = new Set,
+				opened = MessageUserStore.message();
 			messages.forEach(message => {
-				if (message?.folder === sFromFolderFullName && message.unsubsribeLinks?.().length
+				if (opened?.folder === message?.folder && opened?.uid === message?.uid) {
+					message = opened;
+				}
+				const hasUnsubscribe = message?.unsubsribeLinks?.().length
+					|| /unsubscribe/i.test([
+						message?.subject?.(), message?.preview, message?.plain?.(),
+						message?.html?.(), message?.body?.textContent
+					].join('\n'));
+				if (message?.folder === sFromFolderFullName && hasUnsubscribe
 					&& oUids.has(message.uid)
 				) {
 					newsletterUids.add(message.uid);

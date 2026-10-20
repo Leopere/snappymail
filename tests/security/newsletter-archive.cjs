@@ -11,13 +11,14 @@ const method = source.slice(start, source.indexOf('\n\t/**', start + 1));
 const FolderType = { Archive: 1, Inbox: 2, Junk: 3, Trash: 4 };
 const newsletter = (uid = 1, threads = []) => ({ uid, folder: 'INBOX', unsubsribeLinks: () => ['https://example.test/unsubscribe'], threads: () => threads });
 
-async function run({ messages = [newsletter()], uids = [1], archive = 'Archive', target = 'Smart.Newsletters', complete = true, switchAccount = false } = {}) {
+async function run({ messages = [newsletter()], opened = null, uids = [1], archive = 'Archive', target = 'Smart.Newsletters', complete = true, switchAccount = false } = {}) {
  const moves = [], prompts = [];
  let account = 'account-a';
  const store = () => messages;
  store.moveMessages = (...args) => moves.push(args);
  const context = {
   FolderType, UNUSED_OPTION_VALUE: 'unused', MessagelistUserStore: store,
+  MessageUserStore: { message: () => opened },
   getFolderInboxName: () => 'INBOX',
   getFolderFromCacheList: name => name && name !== 'unused' ? { fullName: name, selectable: () => true } : null,
   FolderUserStore: { archiveFolder: () => archive, spamFolder: () => 'Spam', trashFolder: () => 'Trash' },
@@ -35,6 +36,21 @@ async function run({ messages = [newsletter()], uids = [1], archive = 'Archive',
  let result = await run({ archive: 'INBOX' });
  assert.equal(result.moves[0][2], 'Smart.Newsletters', 'newsletter archive must leave Inbox even with a bad archive mapping');
  assert.equal(result.moves.length, 1);
+ for (const content of [
+  { plain: () => 'A weekly update.\nClick here to UNSUBSCRIBE.' },
+  { html: () => '<footer><a href="https://example.test/unsubscribe">Leave this list</a></footer>' },
+  { body: { textContent: 'You can unsubscribe from these updates.' } },
+  { preview: 'To unsubscribe, visit your preferences.' },
+  { subject: () => 'How to unsubscribe' }
+ ]) {
+  const message = { uid: 1, folder: 'INBOX', ...content };
+  result = await run({ messages: [message] });
+  assert.equal(result.moves[0][2], 'Smart.Newsletters', 'unsubscribe in content must work without List-Unsubscribe');
+  result = await run({ messages: [{ uid: 1, folder: 'INBOX' }], opened: message });
+  assert.equal(result.moves[0][2], 'Smart.Newsletters', 'toolbar archive must use the opened message body');
+ }
+ result = await run({ messages: [{ uid: 1, folder: 'INBOX', plain: () => 'A personal message without a list footer.' }] });
+ assert.equal(result.moves[0][2], 'Archive', 'unrelated content must keep ordinary Archive behavior');
  result = await run({ messages: [newsletter(1, [1, 2])], uids: [1, 2] });
  assert.deepEqual([...result.moves[0][1]], [1, 2], 'archive must preserve thread membership in one move');
  for (const options of [{ complete: false }, { target: 'INBOX' }, { target: 'Trash' }, { target: 'Spam' }]) {
