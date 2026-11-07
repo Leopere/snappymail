@@ -90,10 +90,13 @@ so a stalled initial request cannot leave the user on an indefinite loading spin
 
 ## Shipping and deployment
 
-The Stop hook runs the local verification command declared in `.ship-it.json`.
-It builds the browser assets, checks continuity, lints the source, and runs the
-security suite, including the deterministic OpenPGP contracts. The former
-Actions workflows are retained as references under `docs/legacy-actions/`.
+Before committing and pushing changes to `master`, run the local verification
+command declared in `.ship-it.json`. It builds the browser assets, checks
+continuity, lints the source, and runs the security suite, including the
+deterministic OpenPGP contracts. Then run `scripts/deploy-production.sh` to
+submit and observe the exact pushed revision through the existing Jenkins
+handoff. The former Actions workflows are retained as references under
+`docs/legacy-actions/`.
 
 The deployment handoff builds one immutable image and checks its startup.
 It deploys and accepts BoomPay first, then updates only the SnappyMail service
