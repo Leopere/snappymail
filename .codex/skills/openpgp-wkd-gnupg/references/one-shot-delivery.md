@@ -110,12 +110,12 @@ binary directly over the live file.
 
 A request to repeat this delivery or decryption challenge authorizes submission
 through the existing receiver only. It does not authorize replacing the
-production receiver binary. The current `../one-shot-tally/.deploy-it.json`
-installs the sender locally and is not a remote receiver deployment contract.
-Change the receiver only when the user explicitly authorizes that exact
-production target and artifact, or after the user trusts a tracked contract
-that owns the remote update. Otherwise, report the mismatch and stop before
-mutation.
+production receiver binary. The sender has a separate exact-main Jenkins
+handoff at `../one-shot-tally/scripts/jenkins-delivery.py`; it installs the
+local sender and does not deploy the remote receiver. Change the receiver only
+when the user explicitly authorizes that exact production target and artifact,
+or after the user authorizes a tracked Jenkins handoff for that remote update. Otherwise, report
+the mismatch and stop before mutation.
 
 ### 2. Diagnose WKD with an empty GnuPG home when needed
 
