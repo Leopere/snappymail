@@ -5,13 +5,14 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'deploy-production: %s\n' "$*" >&2; exit 1; }
-require_var() { [ -n "${!1:-}" ] || fail "$1 is required"; }
-
-require_var DEPLOY_IT_COMMIT
-require_var DEPLOY_IT_ENVIRONMENT
-[ "$DEPLOY_IT_ENVIRONMENT" = production ] || fail 'DEPLOY_IT_ENVIRONMENT must be production'
-[[ "$DEPLOY_IT_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail 'DEPLOY_IT_COMMIT must be one full lowercase Git commit ID'
+source_root="$(cd "$(dirname "$0")/.." && pwd)"
+branch="$(git -C "$source_root" symbolic-ref --quiet --short HEAD)"
+[[ "$branch" == master ]] || fail 'Run this command from the existing master branch.'
+revision="$(git -C "$source_root" rev-parse HEAD)"
+remote_line="$(git -C "$source_root" ls-remote --exit-code origin refs/heads/master)"
+[[ "$revision" =~ ^[0-9a-f]{40}$ && "${remote_line%%$'\t'*}" == "$revision" ]] || fail 'Push this exact master revision before submitting to Jenkins.'
+export DEPLOY_IT_COMMIT="$revision" DEPLOY_IT_BRANCH="$branch"
+export DEPLOY_IT_ENVIRONMENT=production DEPLOY_IT_REPO_ROOT="$source_root"
 command -v python3 >/dev/null 2>&1 || fail 'python3 is required'
 
-source_root="$(cd "$(dirname "$0")/.." && pwd)"
 exec python3 "$source_root/scripts/jenkins-release.py" "$DEPLOY_IT_COMMIT"

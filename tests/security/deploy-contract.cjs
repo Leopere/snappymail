@@ -7,7 +7,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '../..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
-const manifest = JSON.parse(read('.deploy-it.json'));
+assert(!fs.existsSync(path.join(root, '.deploy-it.json')));
 const deploy = read('scripts/deploy-production.sh');
 const dockerfile = read('.docker/release/Dockerfile');
 const entrypoint = read('.docker/release/files/entrypoint.sh');
@@ -18,16 +18,11 @@ assert.deepStrictEqual(shipping, {
 	verification: { command: ['./scripts/verify.sh'], timeout_seconds: 1800 }
 });
 assert(fs.statSync(path.join(root, 'scripts/verify.sh')).mode & 0o111,
-	'The hook verification command must be executable.');
+	'The verification command must be executable.');
 
-assert.deepStrictEqual(manifest, {
-	version: 1,
-	after_ship: true,
-	environment: 'production',
-	timeout_seconds: 1800,
-	command: ['./scripts/deploy-production.sh'],
-	env: []
-});
+assert(deploy.includes('ls-remote --exit-code origin refs/heads/master'));
+assert(deploy.includes('symbolic-ref --quiet --short HEAD'));
+assert(deploy.includes('DEPLOY_IT_COMMIT="$revision"'));
 const handoff = read('scripts/jenkins-release.py');
 assert(deploy.includes('jenkins-release.py'), 'Production delivery must use the Jenkins handoff.');
 assert(!deploy.includes('docker buildx build'), 'Jenkins owns the release build.');
